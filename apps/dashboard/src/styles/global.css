@@ -1,0 +1,371 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------------------------------------------------------------------------
+   Design tokens — light is the base, .dark overrides.
+   Chart/series colors follow the validated reference palette (dataviz skill):
+   categorical slots stepped per surface; status colors fixed across modes.
+--------------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+  --page: #f4f4f1;
+  --surface: #fcfcfb;
+  --raised: #ffffff;
+  --overlay: #f0efec;
+  --line: #e1e0d9;
+  --line-strong: #c3c2b7;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-3: #898781;
+  --accent: #2a78d6;
+  --accent-strong: #1c5cab;
+  --violet: #4a3aa7;
+  --good: #0ca30c;
+  --good-text: #006300;
+  --warn: #b97f00;
+  --warn-raw: #fab219;
+  --serious: #b85a33;
+  --critical: #d03b3b;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+  --grid: #e1e0d9;
+  --shadow-card: 0 1px 2px rgba(11, 11, 11, 0.05), 0 4px 16px rgba(11, 11, 11, 0.05);
+  --shadow-pop: 0 4px 12px rgba(11, 11, 11, 0.12), 0 12px 40px rgba(11, 11, 11, 0.14);
+}
+
+.dark {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --raised: #232322;
+  --overlay: #2c2c2a;
+  --line: #2c2c2a;
+  --line-strong: #383835;
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --ink-3: #898781;
+  --accent: #3987e5;
+  --accent-strong: #6da7ec;
+  --violet: #9085e9;
+  --good: #0ca30c;
+  --good-text: #0ca30c;
+  --warn: #fab219;
+  --warn-raw: #fab219;
+  --serious: #ec835a;
+  --critical: #e66767;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+  --grid: #2c2c2a;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.35);
+  --shadow-pop: 0 4px 12px rgba(0, 0, 0, 0.5), 0 16px 48px rgba(0, 0, 0, 0.55);
+}
+
+@theme inline {
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-overlay: var(--overlay);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-violet: var(--violet);
+  --color-good: var(--good);
+  --color-good-text: var(--good-text);
+  --color-warn: var(--warn);
+  --color-warn-raw: var(--warn-raw);
+  --color-serious: var(--serious);
+  --color-critical: var(--critical);
+  --font-sans: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  --radius-card: 0.75rem;
+  --radius-chip: 0.5rem;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--accent) 30%, transparent);
+}
+
+/* Scrollbars — quiet, hairline */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Focus ring */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Markdown prose (react-markdown output)                              */
+/* ------------------------------------------------------------------ */
+.md-prose {
+  line-height: 1.65;
+  color: var(--ink-2);
+  font-size: 0.875rem;
+  overflow-wrap: break-word;
+}
+.md-prose > :first-child {
+  margin-top: 0;
+}
+.md-prose h1,
+.md-prose h2,
+.md-prose h3,
+.md-prose h4 {
+  color: var(--ink);
+  font-weight: 650;
+  margin: 1.4em 0 0.5em;
+  line-height: 1.25;
+}
+.md-prose h1 {
+  font-size: 1.25rem;
+}
+.md-prose h2 {
+  font-size: 1.05rem;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--line);
+}
+.md-prose h3 {
+  font-size: 0.95rem;
+}
+.md-prose p {
+  margin: 0.6em 0;
+}
+.md-prose ul,
+.md-prose ol {
+  margin: 0.6em 0;
+  padding-left: 1.4em;
+}
+.md-prose ul {
+  list-style: disc;
+}
+.md-prose ol {
+  list-style: decimal;
+}
+.md-prose li {
+  margin: 0.25em 0;
+}
+.md-prose a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--accent) 40%, transparent);
+  text-underline-offset: 2px;
+}
+.md-prose code {
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  background: var(--overlay);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+.md-prose pre {
+  background: var(--overlay);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  margin: 0.8em 0;
+}
+.md-prose pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+.md-prose blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 1em;
+  margin: 0.8em 0;
+  color: var(--ink-3);
+}
+.md-prose table {
+  border-collapse: collapse;
+  margin: 0.8em 0;
+  width: 100%;
+  display: block;
+  overflow-x: auto;
+  font-size: 0.85rem;
+}
+.md-prose th,
+.md-prose td {
+  border: 1px solid var(--line);
+  padding: 0.4em 0.7em;
+  text-align: left;
+}
+.md-prose th {
+  background: var(--overlay);
+  color: var(--ink);
+  font-weight: 600;
+}
+.md-prose hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 1.2em 0;
+}
+.md-prose strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.md-prose input[type="checkbox"] {
+  margin-right: 0.4em;
+  accent-color: var(--accent);
+}
+
+/* ------------------------------------------------------------------ */
+/* Animations                                                          */
+/* ------------------------------------------------------------------ */
+@keyframes flame-flicker {
+  0%,
+  100% {
+    transform: scale(1) rotate(-2deg);
+  }
+  30% {
+    transform: scale(1.08) rotate(2deg);
+  }
+  60% {
+    transform: scale(0.96) rotate(-1deg);
+  }
+}
+.flame {
+  animation: flame-flicker 1.6s ease-in-out infinite;
+  transform-origin: 50% 90%;
+}
+
+@keyframes status-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--pulse-color, var(--good)) 45%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+.status-pulse {
+  animation: status-pulse 2.2s ease-out infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+.shimmer {
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    color-mix(in oklab, var(--ink) 6%, transparent) 50%,
+    transparent 70%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+@keyframes stream-caret {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+.stream-caret::after {
+  content: "▍";
+  color: var(--accent);
+  animation: stream-caret 0.9s step-end infinite;
+  margin-left: 1px;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Dialog / popover enter animations */
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes content-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+.dialog-overlay[data-state="open"] {
+  animation: overlay-in 150ms ease-out;
+}
+.dialog-content[data-state="open"] {
+  animation: content-in 170ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+[data-radix-select-viewport] {
+  animation: none;
+}
+.dialog-content[data-side] {
+  animation: pop-in 140ms ease-out;
+  transform: none;
+}

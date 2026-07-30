@@ -1,0 +1,38 @@
+{
+  "name": "@ai-job-search/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local service layer: SQLite task queue, croner scheduler, Claude Code AgentRunner, portal-CLI sources adapter, REST + SSE API",
+  "main": "dist/server/src/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server/src/index.js",
+    "test": "vitest run",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:seed": "tsx scripts/seed.ts"
+  },
+  "dependencies": {
+    "@napi-rs/keyring": "^1.1.6",
+    "better-sqlite3": "^12.2.0",
+    "chokidar": "^5.0.0",
+    "croner": "^9.0.0",
+    "drizzle-orm": "^0.44.2",
+    "express": "^5.1.0",
+    "pdf-lib": "^1.17.1",
+    "pdf-parse": "^2.4.5",
+    "playwright": "^1.62.0",
+    "zod": "^4.0.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.15.0",
+    "@types/pdf-parse": "^1.1.5",
+    "@types/supertest": "^6.0.3",
+    "supertest": "^7.1.1",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

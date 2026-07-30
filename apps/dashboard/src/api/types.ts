@@ -1,0 +1,100 @@
+import type {
+  Application, Connection, ConnectionName, CredentialMeta, EmailRecord, FeedbackEntry,
+  FeedbackKind, Job, JobStatus, PrepTask, QueueTask, RemoteType, ScheduleEvent,
+  Settings, SkillProgress, SourceBudget, UserProfile,
+} from '@shared';
+
+export interface JobsQuery {
+  q?: string;
+  status?: JobStatus | JobStatus[];
+  source?: string;
+  remote?: RemoteType;
+  minScore?: number;
+  legit?: string;
+  sort?: 'salary' | 'score' | 'date';
+  order?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
+}
+
+export interface SearchBody {
+  keywords: string;
+  experience?: string;
+  remote?: RemoteType;
+  location?: string;
+  sources?: string[];
+}
+
+export interface QueueSnapshot {
+  tasks: QueueTask[];
+  budgets: SourceBudget[];
+  paused: boolean;
+}
+
+export interface ApplicationArtifacts {
+  resumeUrl: string | null;
+  coverLetterUrl: string | null;
+  screenshots: string[];
+  answers: Record<string, string> | null;
+}
+
+export interface Api {
+  health(): Promise<{ ok: boolean; version: string }>;
+  // connections
+  getConnections(): Promise<Connection[]>;
+  setConnectionKey(name: ConnectionName, key: string, appId?: string): Promise<Connection>;
+  checkConnection(name: ConnectionName): Promise<Connection>;
+  // profile
+  getProfile(): Promise<UserProfile>;
+  getArtifact(path: string): Promise<{ path: string; markdown: string }>;
+  // jobs
+  getJobs(params?: JobsQuery): Promise<{ total: number; jobs: Job[] }>;
+  getJob(id: number): Promise<Job>;
+  getTopJobs(fitWeighted: boolean, limit?: number): Promise<Job[]>;
+  createJob(body: Partial<Job>): Promise<Job>;
+  applyFromUrl(url: string): Promise<{ job: Job; taskId: number }>;
+  applyJob(id: number): Promise<{ taskId: number }>;
+  skipJob(id: number): Promise<Job>;
+  // applications
+  getApplications(params?: { status?: string; q?: string }): Promise<Application[]>;
+  patchApplication(id: number, body: { status?: JobStatus; notes?: string }): Promise<Application>;
+  approveApplication(id: number): Promise<{ taskId: number }>;
+  rejectApplication(id: number, reason: string): Promise<Application>;
+  getApplicationArtifacts(id: number): Promise<ApplicationArtifacts>;
+  // search & queue
+  search(body: SearchBody): Promise<{ searchId: string }>;
+  getQueue(): Promise<QueueSnapshot>;
+  pauseQueue(): Promise<QueueSnapshot>;
+  resumeQueue(): Promise<QueueSnapshot>;
+  setQueueRate(discoveryIntervalMinutes: number): Promise<Settings>;
+  resolveHuman(taskId: number): Promise<QueueTask>;
+  retryTask(taskId: number): Promise<QueueTask>;
+  cancelTask(taskId: number): Promise<QueueTask>;
+  // emails
+  getEmails(params?: { direction?: string; classification?: string }): Promise<EmailRecord[]>;
+  getOutbox(): Promise<EmailRecord[]>;
+  approveOutbox(id: number): Promise<EmailRecord>;
+  rejectOutbox(id: number, reason?: string): Promise<EmailRecord>;
+  triggerEmailScan(): Promise<{ taskId: number }>;
+  // schedule & skills
+  getSchedule(from?: string, to?: string): Promise<ScheduleEvent[]>;
+  createScheduleEvent(body: Partial<ScheduleEvent>): Promise<ScheduleEvent>;
+  regenPrep(eventId: number): Promise<{ taskId: number }>;
+  getPrepTasks(eventId?: number): Promise<PrepTask[]>;
+  patchPrepTask(id: number, done: boolean): Promise<PrepTask>;
+  getSkillsProgress(): Promise<SkillProgress[]>;
+  // credentials
+  getCredentials(): Promise<CredentialMeta[]>;
+  addCredential(body: { site: string; username: string; password: string; hasCaptcha?: boolean; notes?: string }): Promise<CredentialMeta>;
+  revealCredential(site: string): Promise<{ password: string }>;
+  deleteCredential(site: string): Promise<{ ok: boolean }>;
+  // feedback / ask / settings / reset
+  postFeedback(kind: FeedbackKind, text: string): Promise<FeedbackEntry>;
+  getFeedback(): Promise<FeedbackEntry[]>;
+  applyPlanChange(id: number): Promise<FeedbackEntry>;
+  ask(prompt: string): Promise<{ requestId: string }>;
+  getSettings(): Promise<Settings>;
+  patchSettings(body: Partial<Settings>): Promise<Settings>;
+  resetPreview(scopes: string[]): Promise<{ preview: string[] }>;
+  reset(scopes: string[]): Promise<{ ok: boolean }>;
+}

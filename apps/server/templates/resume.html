@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{TITLE}}</title>
+<style>
+  /* ATS-friendly single-column resume. System fonts, semantic HTML, letter size. */
+  @page { size: letter; margin: 0.6in; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; color: #1c1c1c; }
+  body { font-size: 10.4pt; line-height: 1.34; }
+  a { color: #14406b; text-decoration: none; }
+  header h1 { font-size: 21pt; font-weight: 700; color: #14406b; letter-spacing: 0.01em; }
+  .contact { font-size: 9.4pt; color: #333; margin-top: 2pt; }
+  .contact span + span::before { content: " \2022  "; color: #8ba3bd; }
+  section { margin-top: 9pt; }
+  h2 { font-size: 11pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em;
+       color: #14406b; border-bottom: 1px solid #c4d1de; padding-bottom: 2pt; margin-bottom: 4pt; }
+  .summary p { margin-top: 1pt; }
+  .entry { margin-bottom: 6pt; }
+  .entry-head { display: flex; justify-content: space-between; align-items: baseline; }
+  .entry-title { font-weight: 700; font-size: 10.6pt; }
+  .entry-title .company { font-weight: 600; color: #14406b; }
+  .entry-dates { font-size: 9.4pt; color: #555; white-space: nowrap; margin-left: 8pt; }
+  .entry-sub { font-size: 9.4pt; color: #555; font-style: italic; }
+  ul { margin: 2pt 0 0 14pt; }
+  li { margin-bottom: 1.5pt; }
+  .skills-row { margin-bottom: 2pt; }
+  .skills-row .cat { font-weight: 700; }
+</style>
+</head>
+<body>
+<header>
+  <h1>{{NAME}}</h1>
+  <p class="contact">{{CONTACT}}</p>
+</header>
+{{BODY}}
+</body>
+</html>

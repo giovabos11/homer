@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Software Engineer — Fixture Co (Greenhouse-style)</title></head>
+<body>
+<h1>Apply for Software Engineer at Fixture Co</h1>
+<form id="application_form">
+  <div class="field">
+    <label for="first_name">First Name *</label>
+    <input id="first_name" name="job_application[first_name]" type="text" required>
+  </div>
+  <div class="field">
+    <label for="last_name">Last Name *</label>
+    <input id="last_name" name="job_application[last_name]" type="text" required>
+  </div>
+  <div class="field">
+    <label for="email">Email *</label>
+    <input id="email" name="job_application[email]" type="email" required>
+  </div>
+  <div class="field">
+    <label for="phone">Phone</label>
+    <input id="phone" name="job_application[phone]" type="tel">
+  </div>
+  <div class="field">
+    <label for="resume">Resume/CV *</label>
+    <input id="resume" name="job_application[resume]" type="file" required>
+  </div>
+  <div class="field">
+    <label for="question_auth">Are you authorized to work in the US? *</label>
+    <select id="question_auth" name="job_application[answers][auth]" required>
+      <option value="">Please select</option>
+      <option>Yes</option>
+      <option>No</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="question_sponsor">Will you now or in the future require sponsorship? *</label>
+    <select id="question_sponsor" name="job_application[answers][sponsor]" required>
+      <option value="">Please select</option>
+      <option>Yes</option>
+      <option>No</option>
+    </select>
+  </div>
+  <fieldset class="field">
+    <legend>Are you willing to relocate? *</legend>
+    <label><input type="radio" name="relocate" value="yes" required> Yes</label>
+    <label><input type="radio" name="relocate" value="no"> No</label>
+  </fieldset>
+  <div class="field">
+    <label><input id="consent" type="checkbox" required> I certify that the information provided is accurate.</label>
+  </div>
+  <button type="submit">Submit Application</button>
+</form>
+<script>
+document.getElementById('application_form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  document.body.innerHTML =
+    '<h1>Thank you for applying!</h1><p>Your application has been submitted. Confirmation #FIX-123.</p>';
+});
+</script>
+</body>
+</html>

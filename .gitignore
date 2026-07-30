@@ -95,3 +95,7 @@ upskill/*.md
 
 # Brainstorm mockups (superpowers visual companion) - never ship
 .superpowers/
+
+# US portal skill runtime caches
+.agents/skills/*/cli/.cache.json
+qa-screenshots/

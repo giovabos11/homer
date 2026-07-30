@@ -1,0 +1,633 @@
+import { useMemo, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import {
+  AlertTriangle, Download, Gauge, HandHelping, Link2, Loader2, Pause, PenLine, Play,
+  RotateCcw, Search as SearchIcon, Table2, XCircle,
+} from 'lucide-react';
+import type { JobStatus, RemoteType } from '@shared';
+import { api } from '@/api/client';
+import { useStore } from '@/store/useStore';
+import { downloadCsv } from '@/lib/csv';
+import { fmtRelative, REMOTE_LABEL, salaryLabel, STATUS_LABEL, titleCase } from '@/lib/format';
+import { Card, CardHeader, EmptyState, PageHeader } from '@/components/common/layout';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input, Textarea } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox, Progress, Slider, Tip } from '@/components/ui/controls';
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { FitRing } from '@/components/common/rings';
+import { LegitBadge, SourceIcon, StatusPill, sourceLabel } from '@/components/common/chips';
+import { useJobDrawer } from '@/components/common/JobDrawer';
+
+const SEARCH_SOURCES = ['ats_boards', 'remoteok', 'remotive', 'weworkremotely', 'hn_hiring', 'freehire', 'linkedin'];
+
+/* ------------------------------- Manual search ------------------------------- */
+function SearchForm() {
+  const [keywords, setKeywords] = useState('');
+  const [experience, setExperience] = useState('entry');
+  const [remote, setRemote] = useState<RemoteType>('remote');
+  const [location, setLocation] = useState('Dallas, TX');
+  const [sources, setSources] = useState<string[]>(['ats_boards', 'remoteok', 'freehire']);
+  const [busy, setBusy] = useState(false);
+  const beginSearch = useStore((s) => s.beginSearch);
+
+  const toggleSource = (s: string) =>
+    setSources((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
+
+  return (
+    <Card>
+      <CardHeader title="Manual search" hint="Fan out to portal skills live — results stream in below" />
+      <form
+        className="px-4 pb-4 space-y-3"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (!keywords.trim() || busy) return;
+          setBusy(true);
+          try {
+            const { searchId } = await api.search({
+              keywords: keywords.trim(),
+              experience,
+              remote,
+              ...(remote !== 'remote' ? { location } : {}),
+              sources,
+            });
+            beginSearch(searchId);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <Input
+          placeholder='Keywords — e.g. "react typescript full stack"'
+          value={keywords}
+          onChange={(e) => setKeywords(e.target.value)}
+        />
+        <div className="grid grid-cols-2 gap-2">
+          <Select value={experience} onValueChange={setExperience}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="intern">Internship</SelectItem>
+              <SelectItem value="entry">Entry / New grad</SelectItem>
+              <SelectItem value="mid">Mid-level</SelectItem>
+              <SelectItem value="senior">Senior</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={remote} onValueChange={(v) => setRemote(v as RemoteType)}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="remote">Remote</SelectItem>
+              <SelectItem value="hybrid">Hybrid</SelectItem>
+              <SelectItem value="onsite">On-site</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <AnimatePresence>
+          {remote !== 'remote' && (
+            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
+              <Input placeholder="Location (city, state)" value={location} onChange={(e) => setLocation(e.target.value)} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <div className="flex flex-wrap gap-1.5">
+          {SEARCH_SOURCES.map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => toggleSource(s)}
+              className={`rounded-md border px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+                sources.includes(s)
+                  ? 'border-accent/40 bg-accent/12 text-accent'
+                  : 'border-line text-ink-3 hover:border-line-strong hover:text-ink-2'
+              }`}
+            >
+              {sourceLabel(s)}
+            </button>
+          ))}
+        </div>
+        <Button type="submit" disabled={!keywords.trim() || sources.length === 0 || busy} className="w-full">
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <SearchIcon className="h-4 w-4" />}
+          Search {sources.length} source{sources.length === 1 ? '' : 's'}
+        </Button>
+      </form>
+    </Card>
+  );
+}
+
+function LiveResults() {
+  const session = useStore((s) => s.searchSession);
+  const jobs = useStore((s) => s.jobs);
+  const endSearch = useStore((s) => s.endSearch);
+  const openDrawer = useJobDrawer((s) => s.open);
+  if (!session) return null;
+  const results = session.jobIds
+    .map((id) => jobs.find((j) => j.id === id))
+    .filter((j): j is NonNullable<typeof j> => !!j);
+
+  return (
+    <Card>
+      <CardHeader
+        title={
+          <span className="inline-flex items-center gap-2">
+            Live results
+            <span className="inline-flex h-2 w-2 rounded-full bg-good status-pulse" style={{ ['--pulse-color' as string]: 'var(--good)' }} />
+          </span>
+        }
+        hint={`${results.length} match${results.length === 1 ? '' : 'es'} streamed so far`}
+        right={
+          <Button variant="ghost" size="sm" onClick={endSearch}>
+            Clear
+          </Button>
+        }
+      />
+      <div className="px-2 pb-2">
+        <AnimatePresence mode="popLayout">
+          {results.map((j) => (
+            <motion.button
+              key={j.id}
+              layout
+              initial={{ opacity: 0, x: -16, scale: 0.98 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+              onClick={() => openDrawer(j.id)}
+              className="w-full flex items-center gap-2.5 rounded-lg px-2 py-2 hover:bg-overlay/60 text-left cursor-pointer"
+            >
+              <SourceIcon source={j.source} />
+              <div className="flex-1 min-w-0">
+                <p className="text-[13px] font-medium text-ink truncate">{j.title}</p>
+                <p className="text-xs text-ink-3 truncate">{j.company}</p>
+              </div>
+              {salaryLabel(j) && <Badge variant="accent" className="tabular">{salaryLabel(j)}</Badge>}
+            </motion.button>
+          ))}
+        </AnimatePresence>
+        {results.length === 0 && (
+          <p className="text-xs text-ink-3 px-2 py-4 text-center">
+            Waiting for the first results to stream in…
+          </p>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/* ------------------------------ URL + manual add ------------------------------ */
+function UrlApply() {
+  const [url, setUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+  return (
+    <Card>
+      <CardHeader title="Paste a URL, get an application" hint="Any posting URL — parsed, scored, then tailored under your gate" />
+      <form
+        className="px-4 pb-4 flex gap-2"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (!/^https?:\/\//i.test(url) || busy) return;
+          setBusy(true);
+          try {
+            await api.applyFromUrl(url.trim());
+            setUrl('');
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <Input placeholder="https://boards.greenhouse.io/…" value={url} onChange={(e) => setUrl(e.target.value)} />
+        <Button type="submit" disabled={!/^https?:\/\//i.test(url) || busy}>
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />} Apply
+        </Button>
+      </form>
+    </Card>
+  );
+}
+
+function ManualAdd() {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({
+    company: '', title: '', status: 'applied' as JobStatus, salaryMin: '', salaryMax: '',
+    location: '', remoteType: 'remote' as RemoteType, descriptionMd: '', canonicalUrl: '',
+  });
+  const set = (k: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  return (
+    <Card>
+      <CardHeader
+        title="Track an existing application"
+        hint="Manual records are tracked but never touched by the automation"
+        right={
+          <Button variant="secondary" size="sm" onClick={() => setOpen(true)}>
+            <PenLine className="h-3.5 w-3.5" /> Add record
+          </Button>
+        }
+      />
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogTitle>Add a job / application record</DialogTitle>
+          <DialogDescription>Marked managed: manual — the automation will track it but never act on it.</DialogDescription>
+          <form
+            className="mt-4 space-y-2.5"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!form.company || !form.title || busy) return;
+              setBusy(true);
+              try {
+                await api.createJob({
+                  company: form.company,
+                  title: form.title,
+                  status: form.status,
+                  location: form.location || null,
+                  remoteType: form.remoteType,
+                  canonicalUrl: form.canonicalUrl,
+                  salaryMin: form.salaryMin ? Number(form.salaryMin) : null,
+                  salaryMax: form.salaryMax ? Number(form.salaryMax) : null,
+                  descriptionMd: form.descriptionMd || null,
+                });
+                setOpen(false);
+                setForm({ company: '', title: '', status: 'applied', salaryMin: '', salaryMax: '', location: '', remoteType: 'remote', descriptionMd: '', canonicalUrl: '' });
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            <div className="grid grid-cols-2 gap-2">
+              <Input placeholder="Company *" value={form.company} onChange={(e) => set('company')(e.target.value)} />
+              <Input placeholder="Role title *" value={form.title} onChange={(e) => set('title')(e.target.value)} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Select value={form.status} onValueChange={(v) => set('status')(v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {(['discovered', 'applied', 'interview', 'offer', 'rejected', 'no_response'] as JobStatus[]).map((s) => (
+                    <SelectItem key={s} value={s}>{STATUS_LABEL[s]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={form.remoteType} onValueChange={(v) => set('remoteType')(v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="remote">Remote</SelectItem>
+                  <SelectItem value="hybrid">Hybrid</SelectItem>
+                  <SelectItem value="onsite">On-site</SelectItem>
+                  <SelectItem value="unknown">Unknown</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <Input placeholder="Location" value={form.location} onChange={(e) => set('location')(e.target.value)} />
+              <Input placeholder="Salary min" inputMode="numeric" value={form.salaryMin} onChange={(e) => set('salaryMin')(e.target.value.replace(/\D/g, ''))} />
+              <Input placeholder="Salary max" inputMode="numeric" value={form.salaryMax} onChange={(e) => set('salaryMax')(e.target.value.replace(/\D/g, ''))} />
+            </div>
+            <Input placeholder="Posting URL" value={form.canonicalUrl} onChange={(e) => set('canonicalUrl')(e.target.value)} />
+            <Textarea placeholder="Notes / description (markdown ok)" value={form.descriptionMd} onChange={(e) => set('descriptionMd')(e.target.value)} />
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={!form.company || !form.title || busy}>
+                {busy && <Loader2 className="h-4 w-4 animate-spin" />} Save record
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
+
+/* --------------------------------- Queue panel --------------------------------- */
+function QueuePanel() {
+  const tasks = useStore((s) => s.tasks);
+  const budgets = useStore((s) => s.budgets);
+  const paused = useStore((s) => s.queuePaused);
+  const settings = useStore((s) => s.settings);
+  const setSettings = useStore((s) => s.setSettings);
+  const refreshQueue = useStore((s) => s.refreshQueue);
+  const [rate, setRate] = useState<number | null>(null);
+  const interval = rate ?? settings?.discoveryIntervalMinutes ?? 360;
+
+  const running = tasks.find((t) => t.state === 'running' && t.type === 'discover');
+  const needsHuman = tasks.filter((t) => t.state === 'needs_human');
+  const failed = tasks.filter((t) => t.state === 'failed' && t.lastError !== 'Cancelled by user');
+  const active = tasks
+    .filter((t) => ['pending', 'running', 'paused', 'waiting_session'].includes(t.state))
+    .slice(0, 6);
+
+  const rateLabel = interval < 60 ? `${interval} min` : interval < 1440 ? `${Math.round(interval / 60)} h` : 'daily';
+
+  return (
+    <Card>
+      <CardHeader
+        title="Discovery queue"
+        hint={
+          paused
+            ? 'Paused — cursors saved, nothing will run'
+            : running
+              ? `Working ${sourceLabel(String((running.cursor as { source?: string } | null)?.source ?? '…'))} · page ${(running.cursor as { page?: number } | null)?.page ?? '–'}`
+              : 'Idle — next run on schedule'
+        }
+        right={
+          <div className="flex items-center gap-1.5">
+            {paused ? (
+              <Button size="sm" variant="good" onClick={() => void api.resumeQueue()}>
+                <Play className="h-3.5 w-3.5" /> Resume
+              </Button>
+            ) : (
+              <Button size="sm" variant="secondary" onClick={() => void api.pauseQueue()}>
+                <Pause className="h-3.5 w-3.5" /> Pause
+              </Button>
+            )}
+          </div>
+        }
+      />
+      <div className="px-4 pb-4 space-y-4">
+        {/* needs-human alerts */}
+        <AnimatePresence>
+          {needsHuman.map((t) => (
+            <motion.div
+              key={t.id}
+              initial={{ opacity: 0, scale: 0.97 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, height: 0 }}
+              className="rounded-lg border border-warn-raw/45 bg-warn-raw/10 p-3"
+            >
+              <div className="flex items-start gap-2.5">
+                <HandHelping className="h-4.5 w-4.5 text-warn shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-ink">
+                    Your turn: {titleCase(t.type)} task #{t.id}
+                  </p>
+                  <p className="text-xs text-ink-2 mt-0.5 leading-relaxed">{t.humanPrompt}</p>
+                  <div className="mt-2 flex gap-2">
+                    <Button size="sm" onClick={() => void api.resolveHuman(t.id)}>
+                      I did it — resume
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => void api.cancelTask(t.id)}>
+                      Cancel task
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+
+        {/* failed */}
+        {failed.map((t) => (
+          <div key={t.id} className="rounded-lg border border-critical/35 bg-critical/8 p-3 flex items-start gap-2.5">
+            <AlertTriangle className="h-4 w-4 text-critical shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-ink">{titleCase(t.type)} failed ({t.attempts} attempts)</p>
+              <p className="text-[11px] text-ink-3 mt-0.5 leading-relaxed">{t.lastError}</p>
+            </div>
+            <Tip label="Retry now">
+              <Button size="icon-sm" variant="ghost" onClick={() => void api.retryTask(t.id)}>
+                <RotateCcw className="h-3.5 w-3.5" />
+              </Button>
+            </Tip>
+          </div>
+        ))}
+
+        {/* rate slider */}
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs text-ink-2 inline-flex items-center gap-1.5">
+              <Gauge className="h-3.5 w-3.5 text-ink-3" /> Discovery rate
+            </span>
+            <span className="text-xs font-medium text-ink tabular">every {rateLabel}</span>
+          </div>
+          <Slider
+            min={15}
+            max={1440}
+            step={15}
+            value={[interval]}
+            onValueChange={([v]) => setRate(v ?? interval)}
+            onValueCommit={async ([v]) => {
+              if (v == null) return;
+              const s = await api.setQueueRate(v);
+              setSettings(s);
+              setRate(null);
+            }}
+          />
+        </div>
+
+        {/* active tasks */}
+        {active.length > 0 && (
+          <div className="space-y-1">
+            {active.map((t) => (
+              <div key={t.id} className="flex items-center gap-2 text-xs rounded-md px-2 py-1.5 bg-overlay/50 border border-line/60">
+                <span
+                  className={`h-1.5 w-1.5 rounded-full shrink-0 ${t.state === 'running' ? 'status-pulse' : ''}`}
+                  style={{
+                    background:
+                      t.state === 'running' ? 'var(--good)'
+                        : t.state === 'waiting_session' ? 'var(--series-7)'
+                          : t.state === 'paused' ? 'var(--warn-raw)' : 'var(--ink-3)',
+                    ['--pulse-color' as string]: 'var(--good)',
+                  }}
+                />
+                <span className="font-medium text-ink-2">{titleCase(t.type)}</span>
+                <span className="text-ink-3 truncate flex-1">
+                  {(t.payload as { company?: string }).company ?? (t.cursor as { source?: string } | null)?.source ?? ''}
+                </span>
+                <Badge variant={t.state === 'waiting_session' ? 'violet' : 'default'}>{titleCase(t.state)}</Badge>
+                {t.state === 'pending' && (
+                  <Tip label="Cancel">
+                    <button className="text-ink-3 hover:text-critical cursor-pointer" onClick={() => void api.cancelTask(t.id)}>
+                      <XCircle className="h-3.5 w-3.5" />
+                    </button>
+                  </Tip>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* budgets */}
+        <div>
+          <p className="text-xs font-semibold text-ink uppercase tracking-wide mb-2">Source budgets & health</p>
+          <div className="space-y-2">
+            {budgets.filter((b) => b.enabled).map((b) => {
+              const cap = Math.max(1, b.refillPerHour * 8, b.remainingTokens);
+              return (
+                <div key={b.source} className="flex items-center gap-2.5">
+                  <span
+                    className="h-2 w-2 rounded-full shrink-0"
+                    style={{
+                      background: b.health === 'ok' ? 'var(--good)' : b.health === 'degraded' ? 'var(--warn-raw)' : 'var(--critical)',
+                    }}
+                  />
+                  <span className="text-xs text-ink-2 w-32 truncate shrink-0">{sourceLabel(b.source)}</span>
+                  <Progress value={b.remainingTokens / cap} className="flex-1" barClassName={b.health === 'down' ? 'bg-critical' : b.health === 'degraded' ? 'bg-warn-raw' : undefined} />
+                  <span className="text-[11px] text-ink-3 tabular w-24 text-right shrink-0">
+                    {b.health === 'down' ? 'backing off' : b.nextRun ? `next ${fmtRelative(b.nextRun)}` : 'ready'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/* ------------------------------ Applications table ------------------------------ */
+function ApplicationsTable() {
+  const jobs = useStore((s) => s.jobs);
+  const applications = useStore((s) => s.applications);
+  const openDrawer = useJobDrawer((s) => s.open);
+  const [q, setQ] = useState('');
+  const [status, setStatus] = useState('all');
+  const [source, setSource] = useState('all');
+  const [remote, setRemote] = useState('all');
+  const [minScore, setMinScore] = useState('0');
+
+  const appByJob = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const a of applications) if (a.submittedAt) m.set(a.jobId, a.submittedAt);
+    return m;
+  }, [applications]);
+
+  const sources = useMemo(() => [...new Set(jobs.map((j) => j.source))].sort(), [jobs]);
+
+  const rows = useMemo(() => {
+    let r = [...jobs];
+    if (q.trim()) {
+      const needle = q.trim().toLowerCase();
+      r = r.filter((j) => `${j.company} ${j.title} ${j.location ?? ''}`.toLowerCase().includes(needle));
+    }
+    if (status !== 'all') r = r.filter((j) => j.status === status);
+    if (source !== 'all') r = r.filter((j) => j.source === source);
+    if (remote !== 'all') r = r.filter((j) => j.remoteType === remote);
+    if (minScore !== '0') r = r.filter((j) => (j.fitScore ?? -1) >= Number(minScore));
+    return r.sort((a, b) => b.firstSeen.localeCompare(a.firstSeen));
+  }, [jobs, q, status, source, remote, minScore]);
+
+  const exportCsv = () =>
+    downloadCsv(
+      `applications-${new Date().toISOString().slice(0, 10)}.csv`,
+      ['Company', 'Title', 'Status', 'Source', 'Remote', 'Location', 'Fit score', 'Legit', 'Salary min', 'Salary max', 'First seen', 'Applied at', 'URL'],
+      rows.map((j) => [
+        j.company, j.title, STATUS_LABEL[j.status], j.source, j.remoteType, j.location,
+        j.fitScore, j.legitVerdict, j.salaryMin, j.salaryMax,
+        j.firstSeen.slice(0, 10), appByJob.get(j.id)?.slice(0, 10) ?? '', j.canonicalUrl,
+      ]),
+    );
+
+  return (
+    <Card>
+      <CardHeader
+        title="All applications & tracked jobs"
+        hint={`${rows.length} of ${jobs.length} records`}
+        right={
+          <Button variant="secondary" size="sm" onClick={exportCsv}>
+            <Download className="h-3.5 w-3.5" /> Export CSV
+          </Button>
+        }
+      />
+      <div className="px-4 pb-3 flex flex-wrap gap-2">
+        <Input placeholder="Search company, title, location…" value={q} onChange={(e) => setQ(e.target.value)} className="w-64" />
+        <Select value={status} onValueChange={setStatus}>
+          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All statuses</SelectItem>
+            {Object.entries(STATUS_LABEL).map(([k, v]) => (
+              <SelectItem key={k} value={k}>{v}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={source} onValueChange={setSource}>
+          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All sources</SelectItem>
+            {sources.map((s) => (
+              <SelectItem key={s} value={s}>{sourceLabel(s)}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={remote} onValueChange={setRemote}>
+          <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Any type</SelectItem>
+            <SelectItem value="remote">Remote</SelectItem>
+            <SelectItem value="hybrid">Hybrid</SelectItem>
+            <SelectItem value="onsite">On-site</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={minScore} onValueChange={setMinScore}>
+          <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="0">Any score</SelectItem>
+            <SelectItem value="60">Fit ≥ 60</SelectItem>
+            <SelectItem value="75">Fit ≥ 75</SelectItem>
+            <SelectItem value="85">Fit ≥ 85</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      {rows.length === 0 ? (
+        <EmptyState
+          icon={Table2}
+          title="No records match these filters"
+          hint="Loosen a filter, or run a search above to bring in fresh openings."
+        />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-y border-line bg-overlay/40">
+                <th className="px-4 py-2 font-medium">Company / Role</th>
+                <th className="px-3 py-2 font-medium">Status</th>
+                <th className="px-3 py-2 font-medium">Source</th>
+                <th className="px-3 py-2 font-medium">Type</th>
+                <th className="px-3 py-2 font-medium text-right">Fit</th>
+                <th className="px-3 py-2 font-medium text-right">Salary</th>
+                <th className="px-3 py-2 font-medium text-right">Seen</th>
+                <th className="px-3 py-2 font-medium text-right">Applied</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line/70">
+              {rows.map((j) => (
+                <tr key={j.id} onClick={() => openDrawer(j.id)} className="hover:bg-overlay/50 cursor-pointer transition-colors">
+                  <td className="px-4 py-2">
+                    <p className="font-medium text-ink truncate max-w-72">{j.title}</p>
+                    <p className="text-xs text-ink-3 flex items-center gap-1.5">
+                      {j.company}
+                      <LegitBadge verdict={j.legitVerdict} reasons={j.legitReasons} compact />
+                    </p>
+                  </td>
+                  <td className="px-3 py-2"><StatusPill status={j.status} /></td>
+                  <td className="px-3 py-2"><SourceIcon source={j.source} withLabel /></td>
+                  <td className="px-3 py-2 text-xs text-ink-2">{REMOTE_LABEL[j.remoteType]}</td>
+                  <td className="px-3 py-2 text-right">
+                    <span className="inline-flex justify-end"><FitRing score={j.fitScore} size={28} /></span>
+                  </td>
+                  <td className="px-3 py-2 text-right text-xs text-ink-2 tabular whitespace-nowrap">{salaryLabel(j) ?? '—'}</td>
+                  <td className="px-3 py-2 text-right text-xs text-ink-3 whitespace-nowrap">{fmtRelative(j.firstSeen)}</td>
+                  <td className="px-3 py-2 text-right text-xs text-ink-3 whitespace-nowrap">{appByJob.has(j.id) ? fmtRelative(appByJob.get(j.id)) : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/* ----------------------------------- View ----------------------------------- */
+export default function SearchView() {
+  return (
+    <div className="space-y-4">
+      <PageHeader title="Search" subtitle="Manual searches, one-click URL applies, and full control of the discovery queue" />
+      <div className="grid grid-cols-[1.1fr_1.3fr] gap-4 max-[1420px]:grid-cols-1">
+        <div className="space-y-4">
+          <SearchForm />
+          <LiveResults />
+          <UrlApply />
+          <ManualAdd />
+        </div>
+        <QueuePanel />
+      </div>
+      <ApplicationsTable />
+    </div>
+  );
+}

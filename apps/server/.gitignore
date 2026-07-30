@@ -1,0 +1,7 @@
+# Runtime data: SQLite DB, generated artifacts, encrypted vault, audit log
+data/
+
+# Build output
+dist/
+
+node_modules/

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{TITLE}}</title>
+<style>
+  /* One-page cover letter matching the resume's look. Letter size, 0.6in margins. */
+  @page { size: letter; margin: 0.6in; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; color: #1c1c1c; }
+  body { font-size: 10.8pt; line-height: 1.45; }
+  header h1 { font-size: 17pt; font-weight: 700; color: #14406b; }
+  .contact { font-size: 9.4pt; color: #333; margin-top: 2pt; border-bottom: 1px solid #c4d1de; padding-bottom: 6pt; }
+  .contact span + span::before { content: " \2022  "; color: #8ba3bd; }
+  .meta { margin-top: 12pt; font-size: 10.2pt; color: #333; }
+  .addressee { margin-top: 12pt; }
+  .body p { margin-top: 8pt; text-align: left; }
+  .closing { margin-top: 12pt; }
+  .signature { margin-top: 18pt; font-weight: 700; }
+</style>
+</head>
+<body>
+<header>
+  <h1>{{NAME}}</h1>
+  <p class="contact">{{CONTACT}}</p>
+</header>
+<p class="meta">{{DATE}}</p>
+<p class="addressee">{{ADDRESSEE}}</p>
+<div class="body">
+{{BODY}}
+</div>
+<p class="closing">{{CLOSING}}</p>
+<p class="signature">{{NAME}}</p>
+</body>
+</html>

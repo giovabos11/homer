@@ -1,0 +1,39 @@
+{
+  "host": "127.0.0.1",
+  "port": 4750,
+  "settings": {
+    "gateMode": "review",
+    "hybridThreshold": 75,
+    "discoveryIntervalMinutes": 360,
+    "emailScanIntervalMinutes": 120,
+    "country": "US",
+    "applyDriver": "playwright",
+    "perSourceGates": { "linkedin": "review" },
+    "followupAfterDays": 10,
+    "maxFollowups": 2
+  },
+  "queue": {
+    "maxAttempts": 5,
+    "backoffBaseMs": 30000,
+    "backoffMaxMs": 3600000,
+    "pollIntervalMs": 750,
+    "followupSweepCron": "0 9 * * *"
+  },
+  "discovery": {
+    "defaultQuery": "software engineer",
+    "maxPagesPerSource": 2,
+    "pageSize": 25,
+    "skillAllowlist": null
+  },
+  "budgets": {
+    "default": { "capacity": 60, "refillPerHour": 30 },
+    "perSource": {
+      "remotive": { "capacity": 2, "refillPerHour": 0.0834 },
+      "linkedin": { "capacity": 10, "refillPerHour": 2 },
+      "weworkremotely": { "capacity": 12, "refillPerHour": 1 }
+    }
+  },
+  "agent": {
+    "defaultTimeoutMs": 300000
+  }
+}
