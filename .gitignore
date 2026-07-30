@@ -99,3 +99,6 @@ upskill/*.md
 # US portal skill runtime caches
 .agents/skills/*/cli/.cache.json
 qa-screenshots/
+
+# dashboard static assets (favicon/logo) are shipped
+!apps/dashboard/public/*.png
