@@ -3,7 +3,7 @@ import { HashRouter, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { motion } from 'motion/react';
 import {
   CalendarDays, ChevronsLeft, ChevronsRight, FlaskConical, Gem, Inbox as InboxIcon,
-  LayoutDashboard, Loader2, Moon, Plug, Rocket, Search as SearchIcon, Settings as SettingsIcon,
+  LayoutDashboard, Loader2, Moon, Plug, Search as SearchIcon, Settings as SettingsIcon,
   Sparkles, Sun, WifiOff,
 } from 'lucide-react';
 import { IS_MOCK } from '@/api/client';
@@ -83,12 +83,12 @@ function Sidebar() {
       className="h-full shrink-0 border-r border-line bg-surface flex flex-col overflow-hidden"
     >
       <div className={cn('flex items-center gap-2.5 px-3.5 h-14 border-b border-line shrink-0', collapsed && 'justify-center px-0')}>
-        <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-[var(--accent)] to-[var(--violet)] flex items-center justify-center shrink-0">
-          <Rocket className="h-4.5 w-4.5 text-white" />
+        <div className="h-8 w-8 rounded-lg bg-overlay border border-line flex items-center justify-center shrink-0">
+          <img src="/lyre-icon.png" alt="Homer" className="h-6 w-6" />
         </div>
         {!collapsed && (
           <div className="min-w-0">
-            <p className="text-[13px] font-bold text-ink leading-4 truncate">AI Job Search</p>
+            <p className="text-[13px] font-bold text-ink leading-4 truncate">Homer</p>
             <p className="text-[10px] text-ink-3 leading-3.5">US Edition · local-first</p>
           </div>
         )}
@@ -202,8 +202,8 @@ function Shell() {
   if (!ready) {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-3 bg-page">
-        <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-[var(--accent)] to-[var(--violet)] flex items-center justify-center">
-          <Rocket className="h-6 w-6 text-white" />
+        <div className="h-12 w-12 rounded-xl bg-overlay border border-line flex items-center justify-center">
+          <img src="/lyre-icon.png" alt="Homer" className="h-8 w-8" />
         </div>
         <p className="text-sm text-ink-3 inline-flex items-center gap-2">
           <Loader2 className="h-4 w-4 animate-spin" /> Connecting to mission control…

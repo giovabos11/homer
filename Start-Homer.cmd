@@ -1,11 +1,11 @@
 @echo off
 setlocal EnableDelayedExpansion
-title AI Job Search - Launcher
+title Homer - Launcher
 set "ROOT=%~dp0"
 
 echo.
 echo  ============================================
-echo   AI Job Search - starting up
+echo   Homer - starting up
 echo  ============================================
 echo.
 
@@ -45,7 +45,7 @@ if not errorlevel 1 (
   echo [OK] Server already running on port 4750.
 ) else (
   echo [RUN] Starting server on http://127.0.0.1:4750 ...
-  start "AI Job Search - Server" cmd /k "cd /d "%ROOT%apps\server" && npm run dev"
+  start "Homer - Server" cmd /k "cd /d "%ROOT%apps\server" && npm run dev"
 )
 
 REM ---- Start the dashboard unless it is already running ----
@@ -54,7 +54,7 @@ if not errorlevel 1 (
   echo [OK] Dashboard already running on port 5173.
 ) else (
   echo [RUN] Starting dashboard on http://localhost:5173 ...
-  start "AI Job Search - Dashboard" cmd /k "cd /d "%ROOT%apps\dashboard" && npm run dev"
+  start "Homer - Dashboard" cmd /k "cd /d "%ROOT%apps\dashboard" && npm run dev"
 )
 
 REM ---- Wait until both respond, up to ~90 seconds ----
@@ -63,7 +63,7 @@ set /a tries=0
 :waitloop
 set /a tries+=1
 if !tries! gtr 45 (
-  echo [WARN] Timed out waiting. Check the two "AI Job Search" windows for errors.
+  echo [WARN] Timed out waiting. Check the two "Homer" windows for errors.
   pause
   exit /b 1
 )
@@ -73,11 +73,11 @@ if errorlevel 1 (
   goto :waitloop
 )
 
-echo [OK] Everything is up. Opening the dashboard...
+echo [OK] Everything is up. Opening Homer...
 start "" http://localhost:5173
 echo.
-echo  The two console windows titled "AI Job Search - Server" and
-echo  "AI Job Search - Dashboard" keep the app alive - minimize them,
+echo  The two console windows titled "Homer - Server" and
+echo  "Homer - Dashboard" keep the app alive - minimize them,
 echo  but close them when you want to shut everything down.
 echo.
 timeout /t 8 >nul

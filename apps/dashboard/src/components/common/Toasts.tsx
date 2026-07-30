@@ -1,6 +1,6 @@
 import { forwardRef, useEffect } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { AlertTriangle, CheckCircle2, Info, XCircle, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Info, PartyPopper, XCircle, X } from 'lucide-react';
 import { useStore, type Toast } from '@/store/useStore';
 import { celebrate } from '@/lib/celebrate';
 
@@ -15,7 +15,8 @@ const ICONS = {
 // ref on the direct child component.
 const ToastItem = forwardRef<HTMLDivElement, { toast: Toast }>(function ToastItem({ toast }, ref) {
   const dismiss = useStore((s) => s.dismissToast);
-  const { icon: Icon, color } = ICONS[toast.level];
+  const { icon: levelIcon, color } = ICONS[toast.level];
+  const Icon = toast.celebrate ? PartyPopper : levelIcon;
 
   useEffect(() => {
     if (toast.celebrate) celebrate({ x: 0.85, y: 0.85 });

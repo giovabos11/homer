@@ -462,7 +462,7 @@ export const mockApi: Api = {
       if (j) j.status = 'applied';
       a.notes.push({ date: now(), text: 'Submitted by Playwright driver. Confirmation screenshot archived.' });
       emitApp(a);
-      mockBus.emit({ type: 'toast', level: 'success', message: `Application submitted to ${j?.company ?? 'company'} 🎉`, celebrate: true });
+      mockBus.emit({ type: 'toast', level: 'success', message: `Application submitted to ${j?.company ?? 'company'}`, celebrate: true });
     }, 2000);
     return { taskId: nextId++ };
   },
@@ -560,7 +560,7 @@ export const mockApi: Api = {
         setJobStatus(a.jobId, 'applied');
         emitApp(a);
         const j = S.jobs.find((x) => x.id === a.jobId);
-        mockBus.emit({ type: 'toast', level: 'success', message: `Captcha solved — application submitted to ${j?.company} 🎉`, celebrate: true });
+        mockBus.emit({ type: 'toast', level: 'success', message: `Captcha solved — application submitted to ${j?.company}`, celebrate: true });
       }
     }, 2600);
     return structuredClone(t);
@@ -677,7 +677,7 @@ export const mockApi: Api = {
     const siblings = S.prepTasks.filter((x) => x.eventId === t.eventId);
     if (done && siblings.every((x) => x.doneAt != null)) {
       const ev = S.schedule.find((e) => e.id === t.eventId);
-      mockBus.emit({ type: 'toast', level: 'success', message: `Prep complete for ${ev?.company ?? 'interview'} — you're ready 🎉`, celebrate: true });
+      mockBus.emit({ type: 'toast', level: 'success', message: `Prep complete for ${ev?.company ?? 'interview'} — you're ready`, celebrate: true });
     }
     return structuredClone(t);
   },

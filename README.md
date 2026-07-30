@@ -1,4 +1,6 @@
-# AI Job Search — US Edition
+# Homer
+
+*Your local job application copilot for the US market.*
 
 A **local-first AI job application platform** for the US software job market. It automatically discovers matching jobs, scores each one for fit *and* legitimacy (scam filtering), tailors a 1-page resume and 1-page cover letter as PDFs, fills out application forms behind a review gate, tracks your emails and interviews, and shows the whole pipeline on a gamified dashboard. Everything runs on your own machine on top of [Claude Code](https://claude.com/claude-code) using your existing Claude subscription — **no API key, no SaaS, no data leaves your computer**.
 
@@ -23,13 +25,13 @@ The US portal CLIs have zero runtime dependencies, so installing Bun itself is e
 
 ## Quickstart
 
-**Easiest (Windows):** double-click **`Start-AI-Job-Search.cmd`** in the repo root. On first run it installs everything (a few minutes), prepares the database, starts the server and dashboard in two console windows, and opens the dashboard in your browser. Close those two windows to shut everything down. Every later run boots in seconds.
+**Easiest (Windows):** double-click **`Start-Homer.cmd`** in the repo root (or the **Homer** shortcut on your Desktop). On first run it installs everything (a few minutes), prepares the database, starts the server and dashboard in two console windows, and opens the dashboard in your browser. Close those two windows to shut everything down. Every later run boots in seconds.
 
 Prefer to do it by hand? Clone it (or clone your own fork):
 
 ```powershell
-git clone https://github.com/giovabos11/ai-job-search.git
-cd ai-job-search
+git clone https://github.com/giovabos11/homer.git
+cd homer
 ```
 
 **Terminal 1 — the server:**

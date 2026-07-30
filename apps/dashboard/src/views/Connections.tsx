@@ -19,22 +19,37 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import { CONN_STATUS, ConnDot, sourceLabel } from '@/components/common/chips';
 
 const CONN_LABEL: Partial<Record<ConnectionName, { label: string; icon: typeof Server }>> = {
-  server: { label: 'Dashboard ↔ Server', icon: Server },
+  server: { label: 'Dashboard–Server link', icon: Server },
   claude_code: { label: 'Claude Code engine', icon: Bot },
   gmail: { label: 'Gmail (session-only)', icon: Mail },
   playwright: { label: 'Playwright browser', icon: MonitorSmartphone },
   chrome: { label: 'Claude in Chrome', icon: Chrome },
 };
 
-const COUNTRIES: { code: string; flag: string; name: string; note?: string }[] = [
-  { code: 'US', flag: '🇺🇸', name: 'United States', note: 'full portal set' },
-  { code: 'DK', flag: '🇩🇰', name: 'Denmark', note: 'upstream portals' },
-  { code: 'GB', flag: '🇬🇧', name: 'United Kingdom', note: 'via /add-portal' },
-  { code: 'CA', flag: '🇨🇦', name: 'Canada', note: 'via /add-portal' },
-  { code: 'DE', flag: '🇩🇪', name: 'Germany', note: 'via /add-portal' },
-  { code: 'ES', flag: '🇪🇸', name: 'Spain', note: 'via /add-portal' },
-  { code: 'MX', flag: '🇲🇽', name: 'Mexico', note: 'via /add-portal' },
+const COUNTRIES: { code: string; name: string; note?: string }[] = [
+  { code: 'US', name: 'United States', note: 'full portal set' },
+  { code: 'DK', name: 'Denmark', note: 'upstream portals' },
+  { code: 'GB', name: 'United Kingdom', note: 'via /add-portal' },
+  { code: 'CA', name: 'Canada', note: 'via /add-portal' },
+  { code: 'DE', name: 'Germany', note: 'via /add-portal' },
+  { code: 'ES', name: 'Spain', note: 'via /add-portal' },
+  { code: 'MX', name: 'Mexico', note: 'via /add-portal' },
 ];
+
+function CountryFlag({ code, name, width = 20 }: { code: string; name: string; width?: number }) {
+  const iso = code.toLowerCase();
+  return (
+    <img
+      src={`https://flagcdn.com/w40/${iso}.png`}
+      srcSet={`https://flagcdn.com/w80/${iso}.png 2x`}
+      width={width}
+      alt={name}
+      loading="lazy"
+      className="rounded-[3px] shrink-0 border border-line/60"
+      style={{ height: 'auto' }}
+    />
+  );
+}
 
 /* ------------------------------ Key entry modal ------------------------------ */
 function KeyModal({ conn, open, onOpenChange }: { conn: Connection; open: boolean; onOpenChange: (v: boolean) => void }) {
@@ -167,7 +182,11 @@ function IdentityCard() {
             <SelectTrigger className="w-40">
               <SelectValue>
                 <span className="inline-flex items-center gap-1.5">
-                  <span className="text-base leading-none">{COUNTRIES.find((c) => c.code === country)?.flag ?? '🌍'}</span>
+                  {COUNTRIES.some((c) => c.code === country) ? (
+                    <CountryFlag code={country} name={COUNTRIES.find((c) => c.code === country)!.name} />
+                  ) : (
+                    <Globe2 className="h-4 w-4 text-ink-3" />
+                  )}
                   <span>{COUNTRIES.find((c) => c.code === country)?.name ?? country}</span>
                 </span>
               </SelectValue>
@@ -176,7 +195,7 @@ function IdentityCard() {
               {COUNTRIES.map((c) => (
                 <SelectItem key={c.code} value={c.code}>
                   <span className="inline-flex items-center gap-2">
-                    <span className="text-base leading-none">{c.flag}</span> {c.name}
+                    <CountryFlag code={c.code} name={c.name} /> {c.name}
                     {c.note && <span className="text-[10px] text-ink-3">({c.note})</span>}
                   </span>
                 </SelectItem>

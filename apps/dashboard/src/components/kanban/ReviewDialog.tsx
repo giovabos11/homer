@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle2, FileText, Loader2, XCircle } from 'lucide-react';
+import { CheckCircle2, FileText, Flag, Loader2, XCircle } from 'lucide-react';
 import type { Application, Job } from '@shared';
 import { api } from '@/api/client';
 import type { ApplicationArtifacts } from '@/api/types';
@@ -90,7 +90,13 @@ export function ReviewDialog({
                     {Object.entries(answers).map(([q, a]) => (
                       <div key={q} className="rounded-lg border border-line bg-raised/50 px-3 py-2">
                         <p className="text-xs text-ink-3">{q}</p>
-                        <p className={`text-sm mt-0.5 ${a.startsWith('⚑') ? 'text-warn font-medium' : 'text-ink'}`}>{a}</p>
+                        {a.startsWith('Flagged') ? (
+                          <p className="text-sm mt-0.5 text-warn font-medium inline-flex items-center gap-1.5">
+                            <Flag className="h-3.5 w-3.5 shrink-0" /> {a}
+                          </p>
+                        ) : (
+                          <p className="text-sm mt-0.5 text-ink">{a}</p>
+                        )}
                       </div>
                     ))}
                   </div>
