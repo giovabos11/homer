@@ -23,7 +23,9 @@ The US portal CLIs have zero runtime dependencies, so installing Bun itself is e
 
 ## Quickstart
 
-Clone it (or clone your own fork):
+**Easiest (Windows):** double-click **`Start-AI-Job-Search.cmd`** in the repo root. On first run it installs everything (a few minutes), prepares the database, starts the server and dashboard in two console windows, and opens the dashboard in your browser. Close those two windows to shut everything down. Every later run boots in seconds.
+
+Prefer to do it by hand? Clone it (or clone your own fork):
 
 ```powershell
 git clone https://github.com/giovabos11/ai-job-search.git
