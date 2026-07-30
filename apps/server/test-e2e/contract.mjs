@@ -77,9 +77,10 @@ if (appliedJob) {
 
 /* ---------- Applications ---------- */
 const apps = await apiJson('/api/applications');
-check('GET /api/applications', apps, 200, (b) => Array.isArray(b) && b.length > 0);
-check('GET /api/applications?q filter', await apiJson('/api/applications?q=Bluegrid'), 200, (b) => Array.isArray(b));
-const anyApp = apps.body[0];
+check('GET /api/applications', apps, 200, (b) => typeof b.total === 'number' && Array.isArray(b.applications) && b.applications.length > 0);
+check('GET /api/applications?q filter', await apiJson('/api/applications?q=Bluegrid'), 200, (b) => Array.isArray(b.applications));
+check('GET /api/applications?limit=1', await apiJson('/api/applications?limit=1'), 200, (b) => b.applications.length <= 1 && b.total >= b.applications.length);
+const anyApp = apps.body.applications[0];
 check('PATCH /api/applications/:id (note)', await apiJson(`/api/applications/${anyApp.id}`, { method: 'PATCH', body: JSON.stringify({ notes: 'QA contract note' }) }), 200, (b) => b.id === anyApp.id);
 check('PATCH /api/applications/:id (bad status → 400)', await apiJson(`/api/applications/${anyApp.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'bogus' }) }), 400, isErrShape);
 check('PATCH /api/applications/999999 → 404', await apiJson('/api/applications/999999', { method: 'PATCH', body: JSON.stringify({ notes: 'x' }) }), 404, isErrShape);
@@ -94,19 +95,19 @@ check('POST reject (missing reason → 400)', await apiJson(`/api/applications/$
   check('POST /api/jobs/:id/apply', applyRes, 200, (b) => b.taskId != null);
   let stagedApp = null;
   await waitFor(async () => {
-    const list = (await apiJson('/api/applications?status=ready_for_review')).body ?? [];
+    const list = (await apiJson('/api/applications?status=ready_for_review')).body?.applications ?? [];
     stagedApp = list.find((a) => a.jobId === stageJob.id) ?? null;
     return !!stagedApp;
   }, { timeout: 30000, label: 'tailor → ready_for_review' });
   const approve1 = await apiJson(`/api/applications/${stagedApp.id}/approve`, { method: 'POST' });
   check('POST approve (1st)', approve1, 200, (b) => b.taskId != null);
   await waitFor(async () => {
-    const a = (await apiJson('/api/applications')).body.find((x) => x.id === stagedApp.id);
+    const a = (await apiJson('/api/applications')).body.applications.find((x) => x.id === stagedApp.id);
     return a?.status === 'applied' && a?.submittedAt;
   }, { timeout: 30000, label: 'apply arc → applied' });
   const approve2 = await apiJson(`/api/applications/${stagedApp.id}/approve`, { method: 'POST' });
   check('POST approve (2nd) → 409, no double submit', approve2, 409, isErrShape);
-  const finalApp = (await apiJson('/api/applications')).body.find((x) => x.id === stagedApp.id);
+  const finalApp = (await apiJson('/api/applications')).body.applications.find((x) => x.id === stagedApp.id);
   const audit = finalApp ? await apiJson(`/api/applications/${stagedApp.id}/artifacts`) : null;
   record('double-approve: still exactly one submission', finalApp?.status === 'applied', `status=${finalApp?.status}`);
 }
@@ -134,8 +135,8 @@ check('POST /api/queue/rate (valid)', await apiJson('/api/queue/rate', { method:
 check('POST /api/queue/rate (5 min → 400)', await apiJson('/api/queue/rate', { method: 'POST', body: JSON.stringify({ discoveryIntervalMinutes: 5 }) }), 400, isErrShape);
 
 /* ---------- Emails & outbox ---------- */
-check('GET /api/emails', await apiJson('/api/emails'), 200, (b) => Array.isArray(b));
-check('GET /api/emails?direction=inbound', await apiJson('/api/emails?direction=inbound'), 200, (b) => b.every((e) => e.direction === 'inbound'));
+check('GET /api/emails', await apiJson('/api/emails'), 200, (b) => typeof b.total === 'number' && Array.isArray(b.emails));
+check('GET /api/emails?direction=inbound', await apiJson('/api/emails?direction=inbound'), 200, (b) => b.emails.every((e) => e.direction === 'inbound'));
 check('GET /api/emails (bad direction → 400)', await apiJson('/api/emails?direction=sideways'), 400, isErrShape);
 const outbox = await apiJson('/api/outbox');
 check('GET /api/outbox', outbox, 200, (b) => Array.isArray(b));

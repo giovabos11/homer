@@ -12,11 +12,14 @@
 //    through fenceUntrusted() (PRD §8) — never as instructions.
 //  - SIMULATE=1 keeps deterministic pseudo-scores so dashboard demos work
 //    without an agent.
+import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import type { LegitVerdict } from '@shared/types';
 import { fenceUntrusted, readRepoFile, strictJsonFooter } from '../agent/prompts';
 import { mergeVerdicts, structuralSignals, verdictFromSignals } from '../pipeline/legitimacy';
+import { applications, taskQueue } from '../db/schema';
 import { toJob } from '../db/serialize';
+import { fetchJobDetailFromPortal } from '../sources/enrich';
 import { getJob, sleep, updateJob, type JobRow } from './helpers';
 import type { Worker, WorkerArgs } from './registry';
 import type { AppContext } from '../context';
@@ -45,6 +48,57 @@ export function weightedFitScore(r: Pick<ScoreResult, 'technical' | 'experience'
       r.behavioral * WEIGHTS.behavioral +
       r.career * WEIGHTS.career,
   );
+}
+
+/** Fit-score cap when no description could be obtained (confidence limit — never hallucinate one). */
+export const NO_DESCRIPTION_SCORE_CAP = 65;
+export const NO_DESCRIPTION_NOTE =
+  'Description unavailable from the source — scored from title/metadata only; confidence capped';
+
+const ACTIVE_TASK_STATES = ['pending', 'running', 'paused', 'needs_human', 'waiting_session'] as const;
+
+/**
+ * FR-9 auto-advance: a freshly screened job that is legit, not location-vetoed,
+ * and meets the configured gate flows straight into tailoring (the submit gate
+ * still controls actual submission). Deduped against existing applications and
+ * active tailor tasks; manual records are never advanced.
+ */
+export function maybeAutoAdvance(ctx: AppContext, job: JobRow): boolean {
+  const settings = ctx.settings.get();
+  if (settings.autoAdvance === 'off') return false;
+  if (job.status !== 'screened' || job.legitVerdict !== 'legit' || job.managed === 'manual') return false;
+  try {
+    const breakdown = job.fitBreakdownJson ? (JSON.parse(job.fitBreakdownJson) as { locationVeto?: boolean }) : null;
+    if (breakdown?.locationVeto === true) return false;
+  } catch {
+    /* unparseable breakdown → treat as no veto */
+  }
+  if (settings.autoAdvance === 'threshold' && (job.fitScore ?? -1) < settings.autoAdvanceThreshold) return false;
+
+  // Dedupe: skip when an application or an active tailor task already exists.
+  if (ctx.db.select().from(applications).where(eq(applications.jobId, job.id)).get()) return false;
+  const activeTailors = ctx.db
+    .select()
+    .from(taskQueue)
+    .where(inArray(taskQueue.state, [...ACTIVE_TASK_STATES]))
+    .all();
+  const alreadyQueued = activeTailors.some((t) => {
+    if (t.type !== 'tailor') return false;
+    try {
+      return (JSON.parse(t.payloadJson) as { jobId?: number }).jobId === job.id;
+    } catch {
+      return false;
+    }
+  });
+  if (alreadyQueued) return false;
+
+  ctx.queue.enqueue('tailor', { payload: { jobId: job.id, trigger: 'auto_advance' } });
+  ctx.bus.emit({
+    type: 'toast',
+    level: 'info',
+    message: `Auto-advancing ${job.company} — ${job.title} into tailoring (fit ${job.fitScore ?? '?'})`,
+  });
+  return true;
 }
 
 /** Crude HTML → text for pasted-URL postings (FR-4). Untrusted data either way. */
@@ -151,10 +205,20 @@ export const scoreWorker: Worker = {
         ),
       });
       ctx.bus.emit({ type: 'job.scored', job: toJob(row) });
+      maybeAutoAdvance(ctx, row);
       return;
     }
 
     job = await fetchPostingIfNeeded(ctx, job, payload.fetchUrl);
+
+    // Fetch-before-score guard: never evaluate a metadata-only record without
+    // first attempting the portal detail fetch. If the source truly cannot
+    // provide a description we still score — with a note and a capped score —
+    // but the model is told the description is missing (never hallucinated).
+    if (!job.descriptionMd) {
+      job = (await fetchJobDetailFromPortal(ctx, job)) ?? job;
+    }
+    const descriptionUnavailable = !job.descriptionMd;
 
     // 1) Structural legitimacy signals — computed in code, never model-dependent.
     const signals = structuralSignals(ctx.db, job);
@@ -178,6 +242,7 @@ export const scoreWorker: Worker = {
       prompt: buildScorePrompt(ctx, job),
       cwd: ctx.repoRoot,
       allowedTools: ['WebSearch', 'WebFetch'],
+      model: ctx.settings.get().modelPipeline,
       timeoutMs: ctx.config.agent.defaultTimeoutMs,
     });
     const parsed = scoreResultSchema.safeParse(result.structured);
@@ -186,7 +251,9 @@ export const scoreWorker: Worker = {
     }
     const r = parsed.data;
 
-    const fitScore = weightedFitScore(r);
+    const fitScore = descriptionUnavailable
+      ? Math.min(weightedFitScore(r), NO_DESCRIPTION_SCORE_CAP)
+      : weightedFitScore(r);
     const verdict: LegitVerdict = mergeVerdicts(structuralVerdict, r.legitimacy.verdict);
     const reasons = [...structuralReasons, ...r.legitimacy.reasons];
     const breakdown = {
@@ -195,6 +262,7 @@ export const scoreWorker: Worker = {
       behavioral: Math.round(r.behavioral),
       career: Math.round(r.career),
       locationVeto: r.locationVeto,
+      ...(descriptionUnavailable ? { note: NO_DESCRIPTION_NOTE } : {}),
     };
 
     const row = updateJob(ctx, job.id, {
@@ -208,5 +276,6 @@ export const scoreWorker: Worker = {
     if (verdict === 'scam') {
       ctx.bus.emit({ type: 'toast', level: 'warning', message: `Quarantined ${job.company} — ${job.title} (legitimacy check)` });
     }
+    maybeAutoAdvance(ctx, row);
   },
 };

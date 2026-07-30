@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { jobs } from '../db/schema';
 import { toJob } from '../db/serialize';
 import { dedupeKey, upsertJob } from '../sources/dedupe';
+import { fetchJobDetailFromPortal, fetchJobDetailViaAgent } from '../sources/enrich';
 import type { AppContext } from '../context';
 import { ApiError, idParam, parseBody, parseQuery } from './util';
 
@@ -162,6 +163,32 @@ export function jobRoutes(ctx: AppContext): Router {
     }
     const task = ctx.queue.enqueue('tailor', { payload: { jobId: id } });
     res.json({ taskId: task.id });
+  });
+
+  // On-demand description backfill: portal `detail` first, then an agent
+  // (haiku + WebFetch) extraction of the canonical URL as untrusted data.
+  router.post('/jobs/:id/fetch-details', async (req, res) => {
+    const id = idParam(req);
+    let row = ctx.db.select().from(jobs).where(eq(jobs.id, id)).get();
+    if (!row) throw new ApiError(404, 'not_found', `No job ${id}`);
+
+    if (!row.descriptionMd) {
+      row = (await fetchJobDetailFromPortal(ctx, row)) ?? row;
+    }
+    if (!row.descriptionMd) {
+      row = (await fetchJobDetailViaAgent(ctx, row)) ?? row;
+    }
+
+    const job = toJob(row);
+    ctx.bus.emit({ type: 'job.scored', job }); // payload refresh for the dashboard
+    if (!row.descriptionMd) {
+      ctx.bus.emit({
+        type: 'toast',
+        level: 'warning',
+        message: `No description could be fetched for ${row.company} — ${row.title}`,
+      });
+    }
+    res.json({ job });
   });
 
   router.post('/jobs/:id/skip', (req, res) => {

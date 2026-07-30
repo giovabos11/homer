@@ -94,6 +94,7 @@ export const feedbackWorker: Worker = {
     const result = await ctx.runner.run({
       prompt: buildPrompt(ctx, entry.kind, entry.inputMd),
       cwd: ctx.repoRoot,
+      model: ctx.settings.get().modelPipeline,
       timeoutMs: ctx.config.agent.defaultTimeoutMs,
     });
 

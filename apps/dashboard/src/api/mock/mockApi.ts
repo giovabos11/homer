@@ -48,6 +48,8 @@ const S = {
   profile: structuredClone(PROFILE),
   settings: structuredClone(SETTINGS) as Settings,
   paused: false,
+  setupActive: false,
+  setupMode: null as 'interview' | 'documents' | null,
 };
 
 let nextId = 5000;
@@ -73,6 +75,23 @@ function toast(level: 'info' | 'success' | 'warning' | 'error', message: string,
 
 function snapshot(): QueueSnapshot {
   return { tasks: structuredClone(S.tasks), budgets: structuredClone(S.budgets), paused: S.paused };
+}
+
+/** Stream a canned setup reply word-by-word over setup.delta events. */
+function streamSetup(requestId: string, text: string) {
+  const words = text.split(/(?<=\s)/);
+  let i = 0;
+  const tick = () => {
+    if (i >= words.length) {
+      mockBus.emit({ type: 'setup.delta', requestId, delta: '', done: true });
+      return;
+    }
+    const chunk = words.slice(i, i + 4).join('');
+    i += 4;
+    mockBus.emit({ type: 'setup.delta', requestId, delta: chunk, done: false });
+    setTimeout(tick, 40 + Math.random() * 60);
+  };
+  setTimeout(tick, 450);
 }
 
 // ---------------------------------------------------------------------------
@@ -234,9 +253,82 @@ export const mockApi: Api = {
     return structuredClone(c);
   },
 
+  async probeGmail() {
+    await delay(1200);
+    const c = S.connections.find((x) => x.name === 'gmail') ?? null;
+    const detail = 'Not available in headless sessions — email tasks run when you have an interactive Claude session open (/email-bridge)';
+    toast('info', 'Gmail probe finished (mock): connector is session-only');
+    return { connection: c ? structuredClone(c) : null, available: false, toolCount: 0, detail };
+  },
+
   async getProfile() {
     await delay();
     return structuredClone(S.profile);
+  },
+
+  async patchProfile(body) {
+    await delay(250);
+    if (body.name) S.profile.fullName = body.name;
+    if (body.email) S.profile.email = body.email;
+    if (body.phone) S.profile.phone = body.phone;
+    toast('success', 'Contact details updated');
+    return structuredClone(S.profile);
+  },
+
+  async getProfileFile(path: string) {
+    await delay(200);
+    return {
+      path,
+      content: `# ${path.split('/').pop()}\n\n_Mock mode: fixture content for ${path}._\n\nEdit and save to see the flow.`,
+    };
+  },
+
+  async putProfileFile(path: string) {
+    await delay(300);
+    toast('info', `Saved ${path} (mock)`);
+    return { ok: true };
+  },
+
+  async regenerateQueries() {
+    await delay(400);
+    setTimeout(() => toast('success', 'Search queries regenerated from profile (mock)'), 2200);
+    return { requestId: `regen-${nextId++}` };
+  },
+
+  async setupStart(mode) {
+    await delay(250);
+    S.setupActive = true;
+    S.setupMode = mode;
+    const requestId = `setup-${nextId++}`;
+    const intro =
+      mode === 'documents'
+        ? '**Welcome to profile setup!**\n\nI found files in your `documents/` folder: 3 in cv/, 1 in linkedin/. I will read everything, cross-reference for consistency, and propose changes before writing anything.\n\nStarting the scan now…'
+        : '**Welcome to profile setup!**\n\nLet\'s build your profile step by step. First, the basics:\n\nWhat is your full name, and what city are you based in?';
+    streamSetup(requestId, intro);
+    return { requestId };
+  },
+
+  async setupMessage(text: string) {
+    await delay(200);
+    if (!S.setupActive) throw new Error('409: invalid_state — no active setup session');
+    const requestId = `setup-${nextId++}`;
+    streamSetup(
+      requestId,
+      `Got it — I recorded that.\n\n> ${text.slice(0, 120)}\n\nNext question: what was your most recent role, and what did you build there?`,
+    );
+    return { requestId };
+  },
+
+  async setupStatus() {
+    await delay(100);
+    return { active: S.setupActive, mode: S.setupActive ? S.setupMode : null };
+  },
+
+  async setupClear() {
+    await delay(150);
+    S.setupActive = false;
+    S.setupMode = null;
+    return { ok: true };
   },
 
   async getArtifact(path: string) {
@@ -415,6 +507,23 @@ export const mockApi: Api = {
     return { taskId: task.id };
   },
 
+  async fetchJobDetails(id: number) {
+    await delay(900);
+    const j = S.jobs.find((x) => x.id === id);
+    if (!j) throw new Error('job not found');
+    if (!j.descriptionMd) {
+      j.descriptionMd = `## ${j.title}\n\n${j.company} is hiring. _(Backfilled via the source portal's detail command — mock.)_\n\n- Build product features end to end\n- TypeScript, React, Node.js\n- Ship weekly`;
+      if (j.salaryMin == null) {
+        j.salaryMin = 135000;
+        j.salaryMax = 175000;
+        j.salaryCurrency = 'USD';
+      }
+      mockBus.emit({ type: 'job.scored', job: structuredClone(j) });
+      toast('success', `Fetched full description for ${j.company}`);
+    }
+    return { job: structuredClone(j) };
+  },
+
   async skipJob(id: number) {
     await delay();
     const j = S.jobs.find((x) => x.id === id);
@@ -432,7 +541,10 @@ export const mockApi: Api = {
       const q = params.q.toLowerCase();
       apps = apps.filter((a) => `${a.job?.company} ${a.job?.title}`.toLowerCase().includes(q));
     }
-    return structuredClone(apps);
+    const total = apps.length;
+    const offset = params?.offset ?? 0;
+    const limit = params?.limit ?? 50;
+    return { total, applications: structuredClone(apps.slice(offset, offset + limit)) };
   },
 
   async patchApplication(id: number, body) {
@@ -512,6 +624,29 @@ export const mockApi: Api = {
   async getQueue() {
     await delay();
     return snapshot();
+  },
+
+  async runDiscovery() {
+    await delay(250);
+    const existing = S.tasks.find((t) => t.type === 'discover' && (t.state === 'pending' || t.state === 'running'));
+    if (existing) {
+      toast('info', 'A discovery sweep is already running — showing its progress');
+      return { taskId: existing.id };
+    }
+    const task: QueueTask = {
+      id: nextId++, type: 'discover', state: 'running', payload: { trigger: 'manual_run' },
+      cursor: { source: 'ats_boards', page: 1, item: 0 }, runAfter: null, attempts: 0,
+      lastError: null, humanPrompt: null, createdAt: now(), updatedAt: now(),
+    };
+    S.tasks.unshift(task);
+    mockBus.emit({ type: 'queue.updated', task: structuredClone(task) });
+    toast('info', 'Discovery sweep started — new matches will stream into the board');
+    setTimeout(() => {
+      task.state = 'done';
+      task.updatedAt = now();
+      mockBus.emit({ type: 'queue.updated', task: structuredClone(task) });
+    }, 12000);
+    return { taskId: task.id };
   },
 
   async pauseQueue() {
@@ -595,7 +730,10 @@ export const mockApi: Api = {
     let emails = [...S.emails];
     if (params?.direction) emails = emails.filter((e) => e.direction === params.direction);
     if (params?.classification) emails = emails.filter((e) => e.classification === params.classification);
-    return structuredClone(emails);
+    const total = emails.length;
+    const offset = params?.offset ?? 0;
+    const limit = params?.limit ?? 50;
+    return { total, emails: structuredClone(emails.slice(offset, offset + limit)) };
   },
 
   async getOutbox() {
@@ -776,6 +914,11 @@ export const mockApi: Api = {
     };
     setTimeout(tick, 500);
     return { requestId };
+  },
+
+  async askClear() {
+    await delay(120);
+    return { ok: true };
   },
 
   async getSettings() {

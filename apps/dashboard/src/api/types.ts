@@ -38,15 +38,37 @@ export interface ApplicationArtifacts {
   answers: Record<string, string> | null;
 }
 
+export interface GmailProbeResult {
+  connection: Connection | null;
+  available: boolean;
+  toolCount: number;
+  detail: string;
+}
+
+export interface SetupStatus {
+  active: boolean;
+  mode: 'interview' | 'documents' | null;
+}
+
 export interface Api {
   health(): Promise<{ ok: boolean; version: string }>;
   // connections
   getConnections(): Promise<Connection[]>;
   setConnectionKey(name: ConnectionName, key: string, appId?: string): Promise<Connection>;
   checkConnection(name: ConnectionName): Promise<Connection>;
+  probeGmail(): Promise<GmailProbeResult>;
   // profile
   getProfile(): Promise<UserProfile>;
+  patchProfile(body: { name?: string; email?: string; phone?: string }): Promise<UserProfile>;
+  getProfileFile(path: string): Promise<{ path: string; content: string }>;
+  putProfileFile(path: string, content: string): Promise<{ ok: boolean }>;
+  regenerateQueries(): Promise<{ requestId: string }>;
   getArtifact(path: string): Promise<{ path: string; markdown: string }>;
+  // profile setup chat
+  setupStart(mode: 'interview' | 'documents'): Promise<{ requestId: string }>;
+  setupMessage(text: string): Promise<{ requestId: string }>;
+  setupStatus(): Promise<SetupStatus>;
+  setupClear(): Promise<{ ok: boolean }>;
   // jobs
   getJobs(params?: JobsQuery): Promise<{ total: number; jobs: Job[] }>;
   getJob(id: number): Promise<Job>;
@@ -54,9 +76,10 @@ export interface Api {
   createJob(body: Partial<Job>): Promise<Job>;
   applyFromUrl(url: string): Promise<{ job: Job; taskId: number }>;
   applyJob(id: number): Promise<{ taskId: number }>;
+  fetchJobDetails(id: number): Promise<{ job: Job }>;
   skipJob(id: number): Promise<Job>;
   // applications
-  getApplications(params?: { status?: string; q?: string }): Promise<Application[]>;
+  getApplications(params?: { status?: string; q?: string; limit?: number; offset?: number }): Promise<{ total: number; applications: Application[] }>;
   patchApplication(id: number, body: { status?: JobStatus; notes?: string }): Promise<Application>;
   approveApplication(id: number): Promise<{ taskId: number }>;
   rejectApplication(id: number, reason: string): Promise<Application>;
@@ -64,6 +87,7 @@ export interface Api {
   // search & queue
   search(body: SearchBody): Promise<{ searchId: string }>;
   getQueue(): Promise<QueueSnapshot>;
+  runDiscovery(): Promise<{ taskId: number }>;
   pauseQueue(): Promise<QueueSnapshot>;
   resumeQueue(): Promise<QueueSnapshot>;
   setQueueRate(discoveryIntervalMinutes: number): Promise<Settings>;
@@ -71,7 +95,7 @@ export interface Api {
   retryTask(taskId: number): Promise<QueueTask>;
   cancelTask(taskId: number): Promise<QueueTask>;
   // emails
-  getEmails(params?: { direction?: string; classification?: string }): Promise<EmailRecord[]>;
+  getEmails(params?: { direction?: string; classification?: string; limit?: number; offset?: number }): Promise<{ total: number; emails: EmailRecord[] }>;
   getOutbox(): Promise<EmailRecord[]>;
   approveOutbox(id: number): Promise<EmailRecord>;
   rejectOutbox(id: number, reason?: string): Promise<EmailRecord>;
@@ -93,6 +117,7 @@ export interface Api {
   getFeedback(): Promise<FeedbackEntry[]>;
   applyPlanChange(id: number): Promise<FeedbackEntry>;
   ask(prompt: string): Promise<{ requestId: string }>;
+  askClear(): Promise<{ ok: boolean }>;
   getSettings(): Promise<Settings>;
   patchSettings(body: Partial<Settings>): Promise<Settings>;
   resetPreview(scopes: string[]): Promise<{ preview: string[] }>;

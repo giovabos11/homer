@@ -6,6 +6,7 @@
 // scoring.
 import { toJob } from '../db/serialize';
 import { hitToJobInput, upsertJob } from '../sources/dedupe';
+import { fetchJobDetailFromPortal } from '../sources/enrich';
 import { runPortalSearch, PortalCliError } from '../sources/portal-cli';
 import { enabledSkills, resolveBun, type PortalSkill } from '../sources/skills';
 import { PauseRequested, type Worker, type WorkerArgs } from './registry';
@@ -88,8 +89,17 @@ export const discoveryWorker: Worker = {
           if (!hit.url && !hit.id) continue;
           const { job, inserted } = upsertJob(ctx.db, hitToJobInput(skill.source, hit));
           if (inserted) {
-            ctx.bus.emit({ type: 'job.discovered', job: toJob(job) });
-            ctx.queue.enqueue('score', { payload: { jobId: job.id } });
+            // Enrichment: card-only search output (no description) → run the
+            // skill's `detail` command for NEW jobs only. Budget-checked inside
+            // the helper; a failing detail never blocks discovery. When the
+            // queue pauses mid-page we skip the fetch (the score worker's
+            // fetch-first guard backfills later) rather than losing the job.
+            let row = job;
+            if (!row.descriptionMd && !paused()) {
+              row = (await fetchJobDetailFromPortal(ctx, row, { skill, bun })) ?? row;
+            }
+            ctx.bus.emit({ type: 'job.discovered', job: toJob(row) });
+            ctx.queue.enqueue('score', { payload: { jobId: row.id } });
           }
         }
         saveCursor({ sourceIndex: i, page: page + 1 });

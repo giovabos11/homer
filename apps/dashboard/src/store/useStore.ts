@@ -20,6 +20,15 @@ export interface AskSession {
   startedAt: number;
 }
 
+export interface SetupTurn {
+  requestId: string;
+  /** The user's message ('' for the opening turn started by a mode choice). */
+  prompt: string;
+  response: string;
+  done: boolean;
+  startedAt: number;
+}
+
 let toastSeq = 1;
 
 function upsert<T>(list: T[], item: T, key: (x: T) => unknown, front = false): T[] {
@@ -38,10 +47,13 @@ interface StoreState {
 
   jobs: Job[];
   applications: Application[];
+  applicationsTotal: number;
   tasks: QueueTask[];
   budgets: SourceBudget[];
   queuePaused: boolean;
   emails: EmailRecord[];
+  emailsTotal: number;
+  emailsLoadingMore: boolean;
   schedule: ScheduleEvent[];
   prepTasks: PrepTask[];
   skills: SkillProgress[];
@@ -51,10 +63,12 @@ interface StoreState {
   feedback: FeedbackEntry[];
   toasts: Toast[];
   asks: AskSession[];
+  setup: { active: boolean; mode: 'interview' | 'documents' | null; turns: SetupTurn[] };
   searchSession: { id: string; startedAt: number; jobIds: number[] } | null;
 
   loadAll(): Promise<void>;
   refreshEmails(): Promise<void>;
+  loadMoreEmails(): Promise<void>;
   refreshFeedback(): Promise<void>;
   refreshPrep(): Promise<void>;
   refreshQueue(): Promise<void>;
@@ -65,6 +79,10 @@ interface StoreState {
   beginSearch(id: string): void;
   endSearch(): void;
   beginAsk(requestId: string, prompt: string): void;
+  clearAsks(): void;
+  beginSetup(requestId: string, prompt: string, mode?: 'interview' | 'documents'): void;
+  setSetupSession(active: boolean, mode: 'interview' | 'documents' | null): void;
+  clearSetup(): void;
   setSettings(s: Settings): void;
   setProfile(p: UserProfile): void;
   setJobs(jobs: Job[]): void;
@@ -80,10 +98,13 @@ export const useStore = create<StoreState>((set, get) => ({
 
   jobs: [],
   applications: [],
+  applicationsTotal: 0,
   tasks: [],
   budgets: [],
   queuePaused: false,
   emails: [],
+  emailsTotal: 0,
+  emailsLoadingMore: false,
   schedule: [],
   prepTasks: [],
   skills: [],
@@ -93,16 +114,18 @@ export const useStore = create<StoreState>((set, get) => ({
   feedback: [],
   toasts: [],
   asks: [],
+  setup: { active: false, mode: null, turns: [] },
   searchSession: null,
 
   async loadAll() {
     try {
-      const [jobsRes, applications, queue, emails, schedule, prepTasks, skills, connections, settings, profile, feedback] =
+      const [jobsRes, appsRes, queue, emailsRes, schedule, prepTasks, skills, connections, settings, profile, feedback] =
         await Promise.all([
           api.getJobs({ limit: 500 }),
-          api.getApplications(),
+          // The kanban needs the full board; the server caps a page at 500.
+          api.getApplications({ limit: 500 }),
           api.getQueue(),
-          api.getEmails(),
+          api.getEmails({ limit: 50 }),
           api.getSchedule(),
           api.getPrepTasks(),
           api.getSkillsProgress(),
@@ -113,11 +136,13 @@ export const useStore = create<StoreState>((set, get) => ({
         ]);
       set({
         jobs: jobsRes.jobs,
-        applications,
+        applications: appsRes.applications,
+        applicationsTotal: appsRes.total,
         tasks: queue.tasks,
         budgets: queue.budgets,
         queuePaused: queue.paused,
-        emails,
+        emails: emailsRes.emails,
+        emailsTotal: emailsRes.total,
         schedule,
         prepTasks,
         skills,
@@ -134,7 +159,28 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   async refreshEmails() {
-    set({ emails: await api.getEmails() });
+    // Refresh at least as many as are already on screen so nothing disappears.
+    const count = Math.max(50, get().emails.length);
+    const res = await api.getEmails({ limit: Math.min(500, count) });
+    set({ emails: res.emails, emailsTotal: res.total });
+  },
+
+  async loadMoreEmails() {
+    const st = get();
+    if (st.emailsLoadingMore || st.emails.length >= st.emailsTotal) return;
+    set({ emailsLoadingMore: true });
+    try {
+      const res = await api.getEmails({ limit: 50, offset: st.emails.length });
+      set((prev) => {
+        const seen = new Set(prev.emails.map((e) => e.id));
+        return {
+          emails: [...prev.emails, ...res.emails.filter((e) => !seen.has(e.id))],
+          emailsTotal: res.total,
+        };
+      });
+    } finally {
+      set({ emailsLoadingMore: false });
+    }
   },
   async refreshFeedback() {
     set({ feedback: await api.getFeedback() });
@@ -210,6 +256,27 @@ export const useStore = create<StoreState>((set, get) => ({
         }));
         break;
       }
+      case 'setup.delta': {
+        set((prev) => ({
+          setup: {
+            ...prev.setup,
+            active: true,
+            turns: prev.setup.turns.some((t) => t.requestId === e.requestId)
+              ? prev.setup.turns.map((t) =>
+                  t.requestId === e.requestId ? { ...t, response: t.response + e.delta, done: e.done } : t,
+                )
+              : [
+                  ...prev.setup.turns,
+                  { requestId: e.requestId, prompt: '', response: e.delta, done: e.done, startedAt: Date.now() },
+                ],
+          },
+        }));
+        // A finished turn may have written profile files — refetch profileReady.
+        if (e.done) {
+          void api.getProfile().then((p) => set({ profile: p })).catch(() => undefined);
+        }
+        break;
+      }
       case 'toast':
         st.pushToast(e.level, e.message, e.celebrate);
         // feedback responses arrive via toast in the contract — refresh lazily
@@ -237,6 +304,25 @@ export const useStore = create<StoreState>((set, get) => ({
     set((prev) => ({
       asks: [...prev.asks, { requestId, prompt, response: '', done: false, startedAt: Date.now() }],
     }));
+  },
+  clearAsks() {
+    set({ asks: [] });
+  },
+
+  beginSetup(requestId, prompt, mode) {
+    set((prev) => ({
+      setup: {
+        active: true,
+        mode: mode ?? prev.setup.mode,
+        turns: [...prev.setup.turns, { requestId, prompt, response: '', done: false, startedAt: Date.now() }],
+      },
+    }));
+  },
+  setSetupSession(active, mode) {
+    set((prev) => ({ setup: { ...prev.setup, active, mode } }));
+  },
+  clearSetup() {
+    set({ setup: { active: false, mode: null, turns: [] } });
   },
 
   setSettings(s) {

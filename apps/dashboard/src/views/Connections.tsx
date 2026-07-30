@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import {
-  Bot, Chrome, Eye, EyeOff, FileText, Globe2, KeyRound, Loader2, Mail, MonitorSmartphone,
-  Plug, Plus, RefreshCw, Server, ShieldAlert, Trash2, User, Vault,
+  Bot, CheckCircle2, Chrome, Eye, EyeOff, Globe2, Info, KeyRound, Loader2, Mail,
+  MonitorSmartphone, Plug, Plus, RefreshCw, Server, ShieldAlert, Trash2, UserRound, Vault, Zap,
 } from 'lucide-react';
 import type { Connection, ConnectionName } from '@shared';
 import { api } from '@/api/client';
@@ -98,13 +98,77 @@ function KeyModal({ conn, open, onOpenChange }: { conn: Connection; open: boolea
   );
 }
 
+/* --------------------------- Guided connect extras --------------------------- */
+function GmailGuide() {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ available: boolean; detail: string } | null>(null);
+  return (
+    <div className="rounded-lg border border-line bg-raised/50 p-2.5 space-y-2">
+      <p className="text-[11px] text-ink-3 leading-relaxed">
+        Gmail is <span className="font-medium text-ink-2">session-only by design</span>: the server never holds mail
+        credentials. Email tasks park as "waiting for session"; run{' '}
+        <code className="font-mono text-[10px] bg-overlay border border-line rounded px-1">/email-bridge</code> in an
+        interactive Claude session (with the claude.ai Gmail connector on) to process them.
+      </p>
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setResult(null);
+            try {
+              const r = await api.probeGmail();
+              setResult({ available: r.available, detail: r.detail });
+            } catch (e) {
+              setResult({ available: false, detail: e instanceof Error ? e.message : String(e) });
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+          {busy ? 'Probing…' : 'Test connection'}
+        </Button>
+        {result && (
+          <span className={cn('text-[11px] inline-flex items-center gap-1', result.available ? 'text-good-text' : 'text-ink-3')}>
+            {result.available ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Info className="h-3.5 w-3.5" />}
+            <span className="line-clamp-2">{result.detail}</span>
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ChromeGuide() {
+  return (
+    <div className="rounded-lg border border-line bg-raised/50 p-2.5">
+      <p className="text-[11px] text-ink-3 leading-relaxed mb-1.5">
+        Used for automation-hostile sites when you pick the Chrome apply driver. Connect it once:
+      </p>
+      <ol className="text-[11px] text-ink-3 space-y-1 list-decimal list-inside">
+        <li>Install the <span className="text-ink-2 font-medium">Claude in Chrome</span> extension</li>
+        <li>Sign in with your claude.ai account</li>
+        <li>Grant per-site permissions in the extension popup when a task asks</li>
+      </ol>
+      <p className="text-[10px] text-ink-3/80 mt-1.5">The server cannot probe your browser — this card stays manual.</p>
+    </div>
+  );
+}
+
 /* ------------------------------ Connection card ------------------------------ */
 function ConnCard({ conn, index }: { conn: Connection; index: number }) {
   const [keyOpen, setKeyOpen] = useState(false);
   const [checking, setChecking] = useState(false);
   const meta = CONN_LABEL[conn.name];
   const Icon = meta?.icon ?? Plug;
-  const status = CONN_STATUS[conn.status];
+  // Chrome is manual by design — never present it as a failure.
+  const status =
+    conn.name === 'chrome' && conn.status === 'disabled'
+      ? { label: 'Manual — interactive sessions', color: 'var(--series-7)', pulse: false }
+      : CONN_STATUS[conn.status];
 
   return (
     <motion.div
@@ -141,6 +205,8 @@ function ConnCard({ conn, index }: { conn: Connection; index: number }) {
         </Tip>
       </div>
       {conn.detail && <p className="text-[11px] text-ink-3 leading-relaxed line-clamp-2">{conn.detail}</p>}
+      {conn.name === 'gmail' && <GmailGuide />}
+      {conn.name === 'chrome' && <ChromeGuide />}
       <div className="flex items-center justify-between mt-auto">
         <span className="text-[10px] text-ink-3">{conn.lastOk ? `last ok ${fmtRelative(conn.lastOk)}` : 'never connected'}</span>
         {conn.status === 'needs_key' && (
@@ -154,23 +220,22 @@ function ConnCard({ conn, index }: { conn: Connection; index: number }) {
   );
 }
 
-/* ----------------------------- Identity & documents ----------------------------- */
-function IdentityCard() {
+/* -------------------------------- Job market card -------------------------------- */
+function JobMarketCard() {
   const profile = useStore((s) => s.profile);
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
-  if (!profile) return null;
-  const country = settings?.country ?? profile.country;
+  const country = settings?.country ?? profile?.country ?? 'US';
 
   return (
     <Card>
       <CardHeader
         title={
           <span className="inline-flex items-center gap-1.5">
-            <User className="h-4 w-4 text-accent" /> Identity
+            <Globe2 className="h-4 w-4 text-accent" /> Job market
           </span>
         }
-        hint="Auto-extracted from your profile documents — used to fill forms"
+        hint="Which country's portal set discovery targets"
         right={
           <Select
             value={country}
@@ -205,54 +270,11 @@ function IdentityCard() {
         }
       />
       <div className="px-4 pb-4">
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-          <div>
-            <p className="text-[11px] text-ink-3">Name</p>
-            <p className="text-ink font-medium">{profile.fullName}</p>
-          </div>
-          <div>
-            <p className="text-[11px] text-ink-3">Location</p>
-            <p className="text-ink">{profile.location}</p>
-          </div>
-          <div>
-            <p className="text-[11px] text-ink-3">Email</p>
-            <p className="text-ink">{profile.email}</p>
-          </div>
-          <div>
-            <p className="text-[11px] text-ink-3">Phone</p>
-            <p className="text-ink tabular">{profile.phone}</p>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-1.5 mt-3">
-          {profile.links.map((l) => (
-            <a key={l.url} href={l.url} target="_blank" rel="noreferrer noopener">
-              <Badge variant="accent" className="cursor-pointer hover:brightness-110">
-                <Globe2 className="h-3 w-3" /> {l.label}
-              </Badge>
-            </a>
-          ))}
-        </div>
-        <div className="mt-4">
-          <p className="text-xs font-semibold text-ink uppercase tracking-wide mb-1.5">Documents</p>
-          <div className="space-y-1">
-            {profile.documents.map((d) => {
-              const ageDays = (Date.now() - new Date(d.modifiedAt).getTime()) / 86400000;
-              const fresh = ageDays < 7;
-              return (
-                <div key={d.path} className="flex items-center gap-2 text-[13px] rounded-md px-2 py-1.5 hover:bg-overlay/60">
-                  <FileText className="h-3.5 w-3.5 text-ink-3 shrink-0" />
-                  <span className="text-ink-2 truncate flex-1">{d.name}</span>
-                  <Badge variant={fresh ? 'good' : ageDays > 30 ? 'warn' : 'default'}>
-                    {fresh ? 'fresh' : `updated ${fmtRelative(d.modifiedAt)}`}
-                  </Badge>
-                </div>
-              );
-            })}
-          </div>
-          <p className="text-[11px] text-ink-3 mt-2">
-            Edits to these files are detected automatically and queue a profile re-merge.
-          </p>
-        </div>
+        <p className="text-[11px] text-ink-3 flex items-start gap-1.5 leading-relaxed">
+          <UserRound className="h-3.5 w-3.5 shrink-0 mt-px" />
+          Identity, documents, and profile files moved — click your name at the bottom of the sidebar to view and edit
+          them.
+        </p>
       </div>
     </Card>
   );
@@ -440,7 +462,7 @@ export default function Connections() {
           </div>
           <VaultCard />
         </div>
-        <IdentityCard />
+        <JobMarketCard />
       </div>
     </div>
   );

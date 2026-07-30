@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, FolderOpen, Radar, Sparkles, Terminal, X } from 'lucide-react';
+import { CheckCircle2, FolderOpen, Radar, Sparkles, UserRoundPen, X } from 'lucide-react';
 import { api } from '@/api/client';
 import { useStore } from '@/store/useStore';
 import { Button } from '@/components/ui/button';
@@ -94,14 +94,17 @@ export function OnboardingCard() {
       ),
     },
     {
-      icon: Terminal,
+      icon: UserRoundPen,
       title: 'Build your profile',
       done: ready,
       body: (
         <>
-          Open a terminal in the project folder, run <Code>claude</Code>, then type{' '}
-          <Code>/setup</Code>. The guided interview or document scan fills your profile — the file
-          watcher keeps it synced from then on.
+          Open the{' '}
+          <Link to="/assistant" className="text-accent font-medium hover:underline">
+            Assistant → Profile Setup
+          </Link>{' '}
+          and choose how to build your profile: scan your documents or a guided interview.{' '}
+          <span className="text-ink-3/80">(Terminal <Code>/setup</Code> works too.)</span>
         </>
       ),
     },

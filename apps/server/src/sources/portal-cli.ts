@@ -62,6 +62,72 @@ function mapHit(item: Record<string, unknown>): PortalHit {
   };
 }
 
+/** One job's detail as the portal contract's `detail` command emits it. */
+export interface PortalDetail {
+  description: string | null;
+  salaryMin: number | null;
+  salaryMax: number | null;
+  salaryCurrency: string | null;
+  /** Raw work-mode string (remote | hybrid | onsite | …) when reported. */
+  workMode: string | null;
+  location: string | null;
+  raw: Record<string, unknown>;
+}
+
+/**
+ * Run `<skill> detail <id> --format json` (upstream portal contract). `id` is
+ * the hit's external id (or a URL for skills that accept one). Rejects with
+ * PortalCliError when the CLI errors or emits non-JSON.
+ */
+export function runPortalDetail(
+  bunPath: string,
+  skill: PortalSkill,
+  id: string,
+  opts: { timeoutMs?: number; cwd?: string } = {},
+): Promise<PortalDetail> {
+  const args = ['run', skill.cliPath, 'detail', id, '--format', 'json'];
+  return new Promise((resolve, reject) => {
+    execFile(
+      bunPath,
+      args,
+      {
+        cwd: opts.cwd ?? repoRoot(),
+        timeout: opts.timeoutMs ?? 60000,
+        maxBuffer: 32 * 1024 * 1024,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        if (error && !stdout.trim()) {
+          let detail = stderr.trim().slice(0, 400);
+          try {
+            const parsed = JSON.parse(stderr.trim()) as { error?: string; message?: string };
+            detail = parsed.error ?? parsed.message ?? detail;
+          } catch {
+            /* stderr not JSON */
+          }
+          reject(new PortalCliError(`${skill.source} detail failed: ${detail || error.message}`, skill.source, null));
+          return;
+        }
+        try {
+          const item = JSON.parse(stdout) as Record<string, unknown>;
+          const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+          resolve({
+            description: asString(item.description),
+            salaryMin: num(item.salary_min),
+            salaryMax: num(item.salary_max),
+            salaryCurrency: asString(item.salary_currency),
+            workMode: asString(item.remote_type) ?? asString(item.work_mode) ?? asString(item.workMode),
+            location: asString(item.location),
+            raw: item,
+          });
+        } catch {
+          reject(new PortalCliError(`${skill.source} detail returned non-JSON output`, skill.source, null));
+        }
+      },
+    );
+  });
+}
+
 export function runPortalSearch(
   bunPath: string,
   skill: PortalSkill,

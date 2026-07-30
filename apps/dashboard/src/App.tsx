@@ -14,6 +14,7 @@ import { Tip, TooltipProvider } from '@/components/ui/controls';
 import { Button } from '@/components/ui/button';
 import { ToastHost } from '@/components/common/Toasts';
 import { JobDrawer } from '@/components/common/JobDrawer';
+import { ProfileModal } from '@/components/common/ProfileModal';
 import MissionControl from '@/views/MissionControl';
 import Opportunities from '@/views/Opportunities';
 import SearchView from '@/views/Search';
@@ -38,6 +39,59 @@ function useTheme() {
     });
   };
   return { dark, toggle };
+}
+
+function ProfileChip({ collapsed }: { collapsed: boolean }) {
+  const profile = useStore((s) => s.profile);
+  const [open, setOpen] = useState(false);
+  const ready = profile?.profileReady ?? false;
+  const name = ready && profile?.fullName ? profile.fullName : 'Set up your profile';
+  // Email extraction can miss (contact formats vary) — never show the setup nag once ready.
+  const sub = ready
+    ? profile?.email || profile?.location || 'Profile ready'
+    : 'Homer needs to know who it applies for';
+  const initials =
+    ready && profile?.fullName
+      ? profile.fullName
+          .split(/\s+/)
+          .slice(0, 2)
+          .map((w) => w[0]?.toUpperCase() ?? '')
+          .join('')
+      : '?';
+
+  const chip = (
+    <button
+      onClick={() => setOpen(true)}
+      aria-label="Open profile"
+      className={cn(
+        'w-full flex items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors cursor-pointer',
+        'hover:bg-overlay border border-transparent hover:border-line',
+        collapsed && 'justify-center px-0',
+      )}
+    >
+      <span
+        className={cn(
+          'h-8 w-8 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 border',
+          ready ? 'bg-accent/15 border-accent/30 text-accent' : 'bg-warn-raw/15 border-warn-raw/40 text-warn',
+        )}
+      >
+        {initials}
+      </span>
+      {!collapsed && (
+        <span className="min-w-0">
+          <span className="block text-[12px] font-semibold text-ink truncate leading-4">{name}</span>
+          <span className={cn('block text-[10px] truncate leading-3.5', ready ? 'text-ink-3' : 'text-warn')}>{sub}</span>
+        </span>
+      )}
+    </button>
+  );
+
+  return (
+    <>
+      {collapsed ? <Tip label={name}>{chip}</Tip> : chip}
+      <ProfileModal open={open} onOpenChange={setOpen} />
+    </>
+  );
 }
 
 function Sidebar() {
@@ -151,6 +205,7 @@ function Sidebar() {
       </nav>
 
       <div className={cn('px-2 pb-3 space-y-1 shrink-0', collapsed && 'px-1.5')}>
+        <ProfileChip collapsed={collapsed} />
         {IS_MOCK && (
           <div
             className={cn(

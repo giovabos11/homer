@@ -67,6 +67,9 @@ export class ClaudeCodeRunner implements AgentRunner {
     const args = [...resolved.prefixArgs, '-p', '--output-format', 'stream-json', '--verbose'];
     if (opts.sessionId) args.push('--resume', opts.sessionId);
     if (opts.allowedTools?.length) args.push('--allowedTools', opts.allowedTools.join(','));
+    // Per-task model routing: the CLI accepts the aliases haiku/sonnet/opus;
+    // 'default' (or unset) keeps the user's own Claude Code default model.
+    if (opts.model && opts.model !== 'default') args.push('--model', opts.model);
 
     // Subscription OAuth must win: an inherited API key would silently switch billing.
     const env = { ...process.env };

@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer,
 } from 'recharts';
-import { ExternalLink, MapPin, Rocket, SkipForward, X } from 'lucide-react';
+import { DownloadCloud, ExternalLink, Info, Loader2, MapPin, Rocket, SkipForward, X } from 'lucide-react';
 import type { Job } from '@shared';
 import { api } from '@/api/client';
 import { useStore } from '@/store/useStore';
@@ -93,6 +93,7 @@ export function JobDrawer() {
   const job = detail ?? storeJob ?? null;
   const salary = job ? salaryLabel(job) : null;
   const canApply = job && ['discovered', 'screened', 'skipped'].includes(job.status) && job.legitVerdict !== 'scam';
+  const [fetching, setFetching] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -175,12 +176,41 @@ export function JobDrawer() {
                 </div>
               )}
 
+              {job.fitBreakdown?.note && (
+                <div className="rounded-lg border border-warn-raw/40 bg-warn-raw/8 px-3 py-2.5 flex items-start gap-2">
+                  <Info className="h-4 w-4 text-warn shrink-0 mt-0.5" />
+                  <p className="text-xs text-ink-2 leading-relaxed">{job.fitBreakdown.note}</p>
+                </div>
+              )}
+
               <div>
                 <h3 className="text-xs font-semibold text-ink uppercase tracking-wide mb-1.5">Job description</h3>
                 {job.descriptionMd ? (
                   <Markdown>{job.descriptionMd}</Markdown>
                 ) : (
-                  <p className="text-xs text-ink-3">No stored description. {sourceLabel(job.source)} record was metadata-only.</p>
+                  <div className="space-y-2.5">
+                    <p className="text-xs text-ink-3">
+                      No stored description. {sourceLabel(job.source)} record was metadata-only.
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={fetching}
+                      onClick={async () => {
+                        setFetching(true);
+                        try {
+                          const res = await api.fetchJobDetails(job.id);
+                          setDetail(res.job);
+                          useStore.getState().upsertJob(res.job);
+                        } finally {
+                          setFetching(false);
+                        }
+                      }}
+                    >
+                      {fetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <DownloadCloud className="h-3.5 w-3.5" />}
+                      {fetching ? 'Fetching from source…' : 'Fetch full description'}
+                    </Button>
+                  </div>
                 )}
               </div>
             </div>

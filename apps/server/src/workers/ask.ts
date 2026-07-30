@@ -1,6 +1,9 @@
 // Ask-anything worker (FR-29). REAL: streams an AgentRunner session (Claude
 // Code headless in the repo root, so CLAUDE.md + profile skills auto-load as
 // context) and forwards deltas to the dashboard as ask.delta SSE events.
+// Conversational: the session id persists in the settings table (internal
+// askSessionId) so consecutive asks resume the same Claude session; POST
+// /api/ask/clear drops it. Runs on the configurable modelAsk (haiku default).
 // With SIMULATE=1 (or when the Claude CLI is absent) the MockRunner streams a
 // canned reply through the same path.
 import type { Worker, WorkerArgs } from './registry';
@@ -13,11 +16,14 @@ export const askWorker: Worker = {
     const prompt = payload.prompt ?? '';
     if (!prompt) return;
 
+    const sessionId = payload.sessionId ?? ctx.settings.getInternal<string | null>('askSessionId', null) ?? undefined;
+
     let streamed = '';
     const result = await ctx.runner.run({
       prompt,
       cwd: ctx.repoRoot,
-      sessionId: payload.sessionId,
+      sessionId,
+      model: ctx.settings.get().modelAsk,
       timeoutMs: ctx.config.agent.defaultTimeoutMs,
       onEvent: (e) => {
         if (e.type !== 'assistant') return;
@@ -30,6 +36,9 @@ export const askWorker: Worker = {
         }
       },
     });
+
+    // Remember the session so the next ask continues the conversation.
+    if (result.sessionId) ctx.settings.setInternal('askSessionId', result.sessionId);
 
     // If the runner produced a final text that streaming missed, send the remainder.
     if (result.text && result.text.length > streamed.length && result.text.startsWith(streamed)) {

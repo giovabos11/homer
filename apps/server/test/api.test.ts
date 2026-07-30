@@ -98,19 +98,21 @@ describe('API smoke (contract)', () => {
     await world.runner.drain();
 
     const apps = await request(app).get('/api/applications').expect(200);
-    expect(apps.body.length).toBe(1);
-    expect(apps.body[0].status).toBe('ready_for_review');
-    expect(apps.body[0].resumePath).toBeTruthy();
+    expect(apps.body.total).toBe(1);
+    expect(apps.body.applications[0].status).toBe('ready_for_review');
+    expect(apps.body.applications[0].resumePath).toBeTruthy();
 
-    const artifacts = await request(app).get(`/api/applications/${apps.body[0].id}/artifacts`).expect(200);
+    const artifacts = await request(app)
+      .get(`/api/applications/${apps.body.applications[0].id}/artifacts`)
+      .expect(200);
     expect(artifacts.body.resumeUrl).toMatch(/^\/files\//);
 
-    await request(app).post(`/api/applications/${apps.body[0].id}/approve`).expect(200);
+    await request(app).post(`/api/applications/${apps.body.applications[0].id}/approve`).expect(200);
     await world.runner.drain();
 
     const after = await request(app).get('/api/applications').expect(200);
-    expect(after.body[0].status).toBe('applied');
-    expect(after.body[0].submittedAt).toBeTruthy();
+    expect(after.body.applications[0].status).toBe('applied');
+    expect(after.body.applications[0].submittedAt).toBeTruthy();
 
     const schedule = await request(app).get('/api/schedule').expect(200);
     expect(schedule.body.some((e: { type: string }) => e.type === 'followup_due')).toBe(true);

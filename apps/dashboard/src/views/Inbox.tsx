@@ -155,6 +155,22 @@ function OutboxCard({ email }: { email: EmailRecord }) {
   );
 }
 
+function LoadMoreEmails({ label = 'Load older emails' }: { label?: string }) {
+  const emails = useStore((s) => s.emails);
+  const emailsTotal = useStore((s) => s.emailsTotal);
+  const loading = useStore((s) => s.emailsLoadingMore);
+  const loadMoreEmails = useStore((s) => s.loadMoreEmails);
+  if (emails.length >= emailsTotal) return null;
+  return (
+    <div className="px-4 py-2.5 border-t border-line/70 flex justify-center">
+      <Button variant="ghost" size="sm" disabled={loading} onClick={() => void loadMoreEmails()}>
+        {loading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        {label} ({emails.length} of {emailsTotal} loaded)
+      </Button>
+    </div>
+  );
+}
+
 function FollowupsTimeline() {
   const emails = useStore((s) => s.emails);
   const schedule = useStore((s) => s.schedule);
@@ -207,6 +223,7 @@ function FollowupsTimeline() {
               );
             })}
           </div>
+          <LoadMoreEmails label="Load older follow-ups" />
         </div>
       )}
     </Card>
@@ -294,6 +311,7 @@ export default function Inbox() {
               {visible.map((e) => (
                 <ReplyRow key={e.id} email={e} jobName={jobNameFor(e)} />
               ))}
+              <LoadMoreEmails />
             </div>
           )}
         </Card>

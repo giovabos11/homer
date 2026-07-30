@@ -16,6 +16,11 @@ export interface AgentRunOptions {
   /** Resume a previous Claude Code session (--resume). */
   sessionId?: string;
   allowedTools?: string[];
+  /**
+   * Model alias for this run ('haiku' | 'sonnet' | 'opus'). 'default' or unset
+   * means the CLI's own default (no --model flag).
+   */
+  model?: string;
   timeoutMs?: number;
   onEvent?: (e: AgentEvent) => void;
 }

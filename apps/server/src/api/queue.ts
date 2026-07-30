@@ -49,6 +49,16 @@ export function queueRoutes(ctx: AppContext): Router {
     res.json(queueSnapshot(ctx));
   });
 
+  // Run a discovery sweep right now. Deduped: if a discover task is already
+  // pending/running, that task is returned instead of enqueueing another.
+  // Per-source budgets are still respected inside the worker.
+  router.post('/queue/run-discovery', (_req, res) => {
+    const row = ctx.queue.enqueue('discover', { dedupe: true, payload: { trigger: 'manual_run' } });
+    const dto = toQueueTask(row);
+    ctx.bus.emit({ type: 'queue.updated', task: dto });
+    res.json({ taskId: row.id });
+  });
+
   router.post('/queue/pause', (_req, res) => {
     ctx.queue.setPaused(true);
     const snapshot = queueSnapshot(ctx);

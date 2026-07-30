@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  AlertTriangle, Download, Gauge, HandHelping, Link2, Loader2, Pause, PenLine, Play,
-  RotateCcw, Search as SearchIcon, Table2, XCircle,
+  AlertTriangle, ChevronLeft, ChevronRight, Download, Gauge, HandHelping, Link2, Loader2,
+  Pause, PenLine, Play, Radar, RefreshCw, RotateCcw, Search as SearchIcon, Table2,
+  Wand2, XCircle,
 } from 'lucide-react';
-import type { JobStatus, RemoteType } from '@shared';
+import type { Job, JobStatus, RemoteType } from '@shared';
 import { api } from '@/api/client';
 import { useStore } from '@/store/useStore';
 import { downloadCsv } from '@/lib/csv';
@@ -114,6 +115,8 @@ function SearchForm() {
   );
 }
 
+const LIVE_RESULTS_WINDOW = 25;
+
 function LiveResults() {
   const session = useStore((s) => s.searchSession);
   const jobs = useStore((s) => s.jobs);
@@ -123,6 +126,9 @@ function LiveResults() {
   const results = session.jobIds
     .map((id) => jobs.find((j) => j.id === id))
     .filter((j): j is NonNullable<typeof j> => !!j);
+  // Keep the stream light: render only the newest window; the table below has everything.
+  const visible = results.slice(-LIVE_RESULTS_WINDOW);
+  const hidden = results.length - visible.length;
 
   return (
     <Card>
@@ -133,7 +139,11 @@ function LiveResults() {
             <span className="inline-flex h-2 w-2 rounded-full bg-good status-pulse" style={{ ['--pulse-color' as string]: 'var(--good)' }} />
           </span>
         }
-        hint={`${results.length} match${results.length === 1 ? '' : 'es'} streamed so far`}
+        hint={
+          hidden > 0
+            ? `${results.length} matches streamed — showing the latest ${visible.length} (all are in the table below)`
+            : `${results.length} match${results.length === 1 ? '' : 'es'} streamed so far`
+        }
         right={
           <Button variant="ghost" size="sm" onClick={endSearch}>
             Clear
@@ -142,7 +152,7 @@ function LiveResults() {
       />
       <div className="px-2 pb-2">
         <AnimatePresence mode="popLayout">
-          {results.map((j) => (
+          {visible.map((j) => (
             <motion.button
               key={j.id}
               layout
@@ -300,11 +310,14 @@ function QueuePanel() {
   const paused = useStore((s) => s.queuePaused);
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
-  const refreshQueue = useStore((s) => s.refreshQueue);
+  const pushToast = useStore((s) => s.pushToast);
   const [rate, setRate] = useState<number | null>(null);
+  const [runBusy, setRunBusy] = useState(false);
+  const [regenBusy, setRegenBusy] = useState(false);
   const interval = rate ?? settings?.discoveryIntervalMinutes ?? 360;
 
   const running = tasks.find((t) => t.state === 'running' && t.type === 'discover');
+  const discoverActive = tasks.some((t) => t.type === 'discover' && (t.state === 'pending' || t.state === 'running'));
   const needsHuman = tasks.filter((t) => t.state === 'needs_human');
   const failed = tasks.filter((t) => t.state === 'failed' && t.lastError !== 'Cancelled by user');
   const active = tasks
@@ -326,6 +339,21 @@ function QueuePanel() {
         }
         right={
           <div className="flex items-center gap-1.5">
+            <Button
+              size="sm"
+              disabled={runBusy || discoverActive || paused}
+              onClick={async () => {
+                setRunBusy(true);
+                try {
+                  await api.runDiscovery();
+                } finally {
+                  setRunBusy(false);
+                }
+              }}
+            >
+              {runBusy || discoverActive ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Radar className="h-3.5 w-3.5" />}
+              {discoverActive ? 'Discovering…' : 'Run discovery now'}
+            </Button>
             {paused ? (
               <Button size="sm" variant="good" onClick={() => void api.resumeQueue()}>
                 <Play className="h-3.5 w-3.5" /> Resume
@@ -443,7 +471,29 @@ function QueuePanel() {
 
         {/* budgets */}
         <div>
-          <p className="text-xs font-semibold text-ink uppercase tracking-wide mb-2">Source budgets & health</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-semibold text-ink uppercase tracking-wide">Source budgets & health</p>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={regenBusy}
+              onClick={async () => {
+                setRegenBusy(true);
+                try {
+                  await api.regenerateQueries();
+                  pushToast('info', 'Rewriting search queries from your profile — a toast confirms when done');
+                } finally {
+                  setRegenBusy(false);
+                }
+              }}
+            >
+              {regenBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
+              Regenerate search queries
+            </Button>
+          </div>
+          <p className="text-[11px] text-ink-3 mb-2 -mt-1">
+            Queries drive what the scraper looks for — regenerate after profile changes.
+          </p>
           <div className="space-y-2">
             {budgets.filter((b) => b.enabled).map((b) => {
               const cap = Math.max(1, b.refillPerHour * 8, b.remainingTokens);
@@ -471,15 +521,65 @@ function QueuePanel() {
 }
 
 /* ------------------------------ Applications table ------------------------------ */
+const PAGE_SIZES = [25, 50, 100] as const;
+
 function ApplicationsTable() {
-  const jobs = useStore((s) => s.jobs);
+  const storeJobs = useStore((s) => s.jobs);
   const applications = useStore((s) => s.applications);
   const openDrawer = useJobDrawer((s) => s.open);
   const [q, setQ] = useState('');
+  const [debouncedQ, setDebouncedQ] = useState('');
   const [status, setStatus] = useState('all');
   const [source, setSource] = useState('all');
   const [remote, setRemote] = useState('all');
   const [minScore, setMinScore] = useState('0');
+  const [pageSize, setPageSize] = useState<number>(50);
+  const [page, setPage] = useState(0); // zero-based
+  const [rows, setRows] = useState<Job[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+
+  // Debounce free-text search before hitting the server.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q.trim()), 300);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  // Any filter change resets to the first page.
+  useEffect(() => {
+    setPage(0);
+  }, [debouncedQ, status, source, remote, minScore, pageSize]);
+
+  const query = useMemo(
+    () => ({
+      q: debouncedQ || undefined,
+      status: status !== 'all' ? (status as JobStatus) : undefined,
+      source: source !== 'all' ? source : undefined,
+      remote: remote !== 'all' ? (remote as RemoteType) : undefined,
+      minScore: minScore !== '0' ? Number(minScore) : undefined,
+      sort: 'date' as const,
+      order: 'desc' as const,
+    }),
+    [debouncedQ, status, source, remote, minScore],
+  );
+
+  // Server-side pagination — refetch on filters/page (and after board updates).
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api
+      .getJobs({ ...query, limit: pageSize, offset: page * pageSize })
+      .then((res) => {
+        if (cancelled) return;
+        setRows(res.jobs);
+        setTotal(res.total);
+      })
+      .catch(() => undefined)
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [query, page, pageSize]);
 
   const appByJob = useMemo(() => {
     const m = new Map<number, string>();
@@ -487,41 +587,38 @@ function ApplicationsTable() {
     return m;
   }, [applications]);
 
-  const sources = useMemo(() => [...new Set(jobs.map((j) => j.source))].sort(), [jobs]);
+  const sources = useMemo(() => [...new Set(storeJobs.map((j) => j.source))].sort(), [storeJobs]);
 
-  const rows = useMemo(() => {
-    let r = [...jobs];
-    if (q.trim()) {
-      const needle = q.trim().toLowerCase();
-      r = r.filter((j) => `${j.company} ${j.title} ${j.location ?? ''}`.toLowerCase().includes(needle));
-    }
-    if (status !== 'all') r = r.filter((j) => j.status === status);
-    if (source !== 'all') r = r.filter((j) => j.source === source);
-    if (remote !== 'all') r = r.filter((j) => j.remoteType === remote);
-    if (minScore !== '0') r = r.filter((j) => (j.fitScore ?? -1) >= Number(minScore));
-    return r.sort((a, b) => b.firstSeen.localeCompare(a.firstSeen));
-  }, [jobs, q, status, source, remote, minScore]);
+  const from = total === 0 ? 0 : page * pageSize + 1;
+  const to = Math.min(total, page * pageSize + rows.length);
+  const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1);
 
-  const exportCsv = () =>
+  const exportCsv = async () => {
+    // Export the full filtered set (server cap 500), not just this page.
+    const res = await api.getJobs({ ...query, limit: 500, offset: 0 });
     downloadCsv(
       `applications-${new Date().toISOString().slice(0, 10)}.csv`,
       ['Company', 'Title', 'Status', 'Source', 'Remote', 'Location', 'Fit score', 'Legit', 'Salary min', 'Salary max', 'First seen', 'Applied at', 'URL'],
-      rows.map((j) => [
+      res.jobs.map((j) => [
         j.company, j.title, STATUS_LABEL[j.status], j.source, j.remoteType, j.location,
         j.fitScore, j.legitVerdict, j.salaryMin, j.salaryMax,
         j.firstSeen.slice(0, 10), appByJob.get(j.id)?.slice(0, 10) ?? '', j.canonicalUrl,
       ]),
     );
+  };
 
   return (
     <Card>
       <CardHeader
         title="All applications & tracked jobs"
-        hint={`${rows.length} of ${jobs.length} records`}
+        hint={total === 0 ? 'No records' : `${from}–${to} of ${total} records`}
         right={
-          <Button variant="secondary" size="sm" onClick={exportCsv}>
-            <Download className="h-3.5 w-3.5" /> Export CSV
-          </Button>
+          <div className="flex items-center gap-1.5">
+            {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-ink-3" />}
+            <Button variant="secondary" size="sm" onClick={() => void exportCsv()}>
+              <Download className="h-3.5 w-3.5" /> Export CSV
+            </Button>
+          </div>
         }
       />
       <div className="px-4 pb-3 flex flex-wrap gap-2">
@@ -607,6 +704,42 @@ function ApplicationsTable() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+      {total > 0 && (
+        <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-t border-line">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-ink-3">Rows per page</span>
+            <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
+              <SelectTrigger className="w-20 h-7.5 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {PAGE_SIZES.map((n) => (
+                  <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-ink-2 tabular">{from}–{to} of {total}</span>
+            <Button
+              variant="secondary"
+              size="icon-sm"
+              disabled={page === 0 || loading}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              aria-label="Previous page"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="secondary"
+              size="icon-sm"
+              disabled={page >= lastPage || loading}
+              onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
+              aria-label="Next page"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       )}
     </Card>

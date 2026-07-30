@@ -114,6 +114,7 @@ export const emailScanWorker: Worker = {
         prompt: buildScanPrompt(ctx),
         cwd: ctx.repoRoot,
         allowedTools: ['mcp__claude_ai_Gmail__*'],
+        model: ctx.settings.get().modelPipeline,
         timeoutMs: ctx.config.agent.defaultTimeoutMs,
       });
       structured = result.structured;

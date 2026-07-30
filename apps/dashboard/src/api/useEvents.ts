@@ -16,6 +16,7 @@ const EVENT_TYPES: SseEvent['type'][] = [
   'connection.updated',
   'schedule.updated',
   'ask.delta',
+  'setup.delta',
   'toast',
 ];
 

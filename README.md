@@ -67,8 +67,9 @@ Open <http://localhost:5173>. The Connections panel on the dashboard tells you e
 This works for any user, from scratch — nothing about the repo owner is hardcoded in the server:
 
 1. **Drop your documents in.** Put your resume/CV (PDF or LaTeX) in `documents/cv/`, your LinkedIn profile export PDF in `documents/linkedin/`, and optionally diplomas, reference letters, and past applications in their folders. `documents/README.md` explains the layout.
-2. **Run `/setup`.** Open Claude Code at the repo root (`claude`) and run `/setup`. It reads your documents (or interviews you if you have none) and populates the profile: `CLAUDE.md` plus the skill files in `.claude/skills/job-application-assistant/` (candidate profile, behavioral profile, CV templates, interview STAR examples, search queries). This profile is what every evaluation, resume, and cover letter is grounded in.
-3. **Stay current automatically.** The server watches `documents/` — when you add or edit a file, it queues a profile re-sync so the profile files keep up with your reality.
+2. **Build your profile from the dashboard.** Open **Assistant → Profile Setup** and pick a mode: **Scan my documents** (reads everything in `documents/`, cross-references it, and proposes changes) or **Interview me** (a guided chat, one section at a time). It populates the profile: `CLAUDE.md` plus the skill files in `.claude/skills/job-application-assistant/` (candidate profile, behavioral profile, CV templates, interview STAR examples). The conversation survives restarts — pick it back up any time, or hit "Start over". The terminal route still works too: run `claude` at the repo root and type `/setup`.
+3. **Tune it from the dashboard.** Click your name at the bottom of the sidebar to review contact details, documents, and the profile files (all editable in place). After profile changes, use **Search → Regenerate search queries** so discovery targets the new you.
+4. **Stay current automatically.** The server watches `documents/` — when you add or edit a file, it queues a profile re-sync so the profile files keep up with your reality.
 
 Note: this fork ships with profile files that the repo owner personalizes locally. If you are not them, run `/setup` with your own documents (and/or the dashboard's Reset with the `profile` scope, which restores the placeholder files) to make it yours.
 

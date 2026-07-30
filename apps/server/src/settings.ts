@@ -16,6 +16,12 @@ export const SETTINGS_KEYS: (keyof Settings)[] = [
   'perSourceGates',
   'followupAfterDays',
   'maxFollowups',
+  'modelAsk',
+  'modelSetup',
+  'modelScraper',
+  'modelPipeline',
+  'autoAdvance',
+  'autoAdvanceThreshold',
 ];
 
 export class SettingsStore {

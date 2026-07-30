@@ -133,6 +133,7 @@ async function draftWithReview(ctx: AppContext, job: JobRow, appId: number): Pro
   const drafted = await ctx.runner.run({
     prompt: buildDrafterPrompt(ctx, job),
     cwd: ctx.repoRoot,
+    model: ctx.settings.get().modelPipeline,
     timeoutMs: ctx.config.agent.defaultTimeoutMs,
   });
   const parsed = tailorDraftSchema.safeParse(drafted.structured);
@@ -147,6 +148,7 @@ async function draftWithReview(ctx: AppContext, job: JobRow, appId: number): Pro
     const reviewed = await ctx.runner.run({
       prompt: buildReviewerPrompt(ctx, job, draft),
       cwd: ctx.repoRoot,
+      model: ctx.settings.get().modelPipeline,
       timeoutMs: ctx.config.agent.defaultTimeoutMs,
     });
     const review = reviewSchema.safeParse(reviewed.structured);

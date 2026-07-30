@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  AlertOctagon, Bot, CheckCircle2, Chrome, Eye, Gauge, Loader2, MonitorSmartphone, ShieldCheck,
-  SlidersHorizontal, Trash2, X, Zap,
+  AlertOctagon, Bot, CheckCircle2, Chrome, Cpu, Eye, FastForward, Gauge, Loader2,
+  MonitorSmartphone, ShieldCheck, SlidersHorizontal, Trash2, X, Zap,
 } from 'lucide-react';
-import type { GateMode, Settings } from '@shared';
+import type { GateMode, ModelChoice, Settings } from '@shared';
 import { api } from '@/api/client';
 import { useStore } from '@/store/useStore';
 import { cn } from '@/lib/utils';
@@ -216,6 +216,138 @@ function AutomationCard() {
   );
 }
 
+/* ------------------------------- Auto-advance card ------------------------------- */
+const ADVANCE_OPTIONS: { value: Settings['autoAdvance']; label: string; desc: string }[] = [
+  { value: 'off', label: 'Off', desc: 'Screened jobs wait until you click Apply — nothing tailors on its own.' },
+  { value: 'threshold', label: 'Score threshold', desc: 'Legit jobs at or above your fit threshold flow into tailoring automatically.' },
+  { value: 'all', label: 'All screened', desc: 'Every legit, non-vetoed job enters tailoring. Highest throughput, highest usage.' },
+];
+
+function AutoAdvanceCard() {
+  const settings = useStore((s) => s.settings);
+  const setSettings = useStore((s) => s.setSettings);
+  const [threshold, setThreshold] = useState<number | null>(null);
+  if (!settings) return null;
+  const patch = async (body: Partial<Settings>) => setSettings(await api.patchSettings(body));
+  const t = threshold ?? settings.autoAdvanceThreshold;
+
+  return (
+    <Card>
+      <CardHeader
+        title={
+          <span className="inline-flex items-center gap-1.5">
+            <FastForward className="h-4 w-4 text-accent" /> Pipeline auto-advance
+          </span>
+        }
+        hint="What happens after scoring — the submit gate above still controls actual submission"
+      />
+      <div className="px-4 pb-4 space-y-3">
+        <div className="grid grid-cols-3 gap-2 max-[1350px]:grid-cols-1">
+          {ADVANCE_OPTIONS.map((o) => {
+            const active = settings.autoAdvance === o.value;
+            return (
+              <button
+                key={o.value}
+                onClick={() => void patch({ autoAdvance: o.value })}
+                className={cn(
+                  'rounded-xl border p-3 text-left transition-all cursor-pointer',
+                  active ? 'border-accent/50 bg-accent/8 shadow-sm' : 'border-line hover:border-line-strong',
+                )}
+              >
+                <p className={cn('text-sm font-semibold', active ? 'text-accent' : 'text-ink')}>{o.label}</p>
+                <p className="text-[11px] text-ink-3 mt-1 leading-relaxed">{o.desc}</p>
+              </button>
+            );
+          })}
+        </div>
+        <AnimatePresence>
+          {settings.autoAdvance === 'threshold' && (
+            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+              <div className="rounded-lg border border-line bg-raised/50 p-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs text-ink-2">Advance into tailoring when fit score ≥</span>
+                  <Badge variant="accent" className="tabular">{t}</Badge>
+                </div>
+                <Slider
+                  min={40}
+                  max={95}
+                  step={1}
+                  value={[t]}
+                  onValueChange={([v]) => setThreshold(v ?? t)}
+                  onValueCommit={async ([v]) => {
+                    if (v != null) await patch({ autoAdvanceThreshold: v });
+                    setThreshold(null);
+                  }}
+                />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <p className="text-[11px] text-ink-3">
+          Suspicious or location-vetoed jobs never auto-advance; manual records are never touched.
+        </p>
+      </div>
+    </Card>
+  );
+}
+
+/* ---------------------------------- Models card ---------------------------------- */
+const MODEL_OPTIONS: { value: ModelChoice; label: string }[] = [
+  { value: 'default', label: 'Default (your Claude Code model)' },
+  { value: 'haiku', label: 'Haiku (fastest + cheapest)' },
+  { value: 'sonnet', label: 'Sonnet' },
+  { value: 'opus', label: 'Opus' },
+];
+
+const MODEL_ROWS: { key: 'modelAsk' | 'modelSetup' | 'modelScraper' | 'modelPipeline'; label: string; desc: string }[] = [
+  { key: 'modelAsk', label: 'Ask chat', desc: 'Quick Q&A over your pipeline — cheap models do fine here' },
+  { key: 'modelSetup', label: 'Profile setup', desc: 'Interview & document-scan onboarding sessions' },
+  { key: 'modelScraper', label: 'Scraper', desc: 'Search-query regeneration from your profile' },
+  { key: 'modelPipeline', label: 'Application pipeline', desc: 'Scoring, resume tailoring, prep guides, email drafting' },
+];
+
+function ModelsCard() {
+  const settings = useStore((s) => s.settings);
+  const setSettings = useStore((s) => s.setSettings);
+  if (!settings) return null;
+  const patch = async (body: Partial<Settings>) => setSettings(await api.patchSettings(body));
+
+  return (
+    <Card>
+      <CardHeader
+        title={
+          <span className="inline-flex items-center gap-1.5">
+            <Cpu className="h-4 w-4 text-accent" /> Models
+          </span>
+        }
+        hint="Which Claude model each task family runs on — all on your subscription login"
+      />
+      <div className="px-4 pb-4 space-y-2.5">
+        {MODEL_ROWS.map((row) => (
+          <div key={row.key} className="flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-[13px] font-medium text-ink">{row.label}</p>
+              <p className="text-[11px] text-ink-3">{row.desc}</p>
+            </div>
+            <Select value={settings[row.key]} onValueChange={(v) => void patch({ [row.key]: v as ModelChoice })}>
+              <SelectTrigger className="w-64 h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {MODEL_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        ))}
+        <div className="rounded-lg border border-line bg-raised/50 px-3 py-2.5 text-xs text-ink-3 leading-relaxed">
+          Cheaper models burn less of your subscription usage, so chat and scraper tasks default to the fast tiers.
+          The application pipeline is where quality shows (resume tailoring, scoring) — Sonnet or Default is worth it there.
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 /* --------------------------------- Danger zone --------------------------------- */
 type Scope = 'db' | 'artifacts' | 'profile';
 
@@ -384,9 +516,11 @@ function DangerZone() {
 export default function SettingsView() {
   return (
     <div className="space-y-4 max-w-4xl">
-      <PageHeader title="Settings" subtitle="Gates, cadence, drivers — and the big red button" />
+      <PageHeader title="Settings" subtitle="Gates, cadence, models — and the big red button" />
       <GateCard />
+      <AutoAdvanceCard />
       <AutomationCard />
+      <ModelsCard />
       <DangerZone />
     </div>
   );

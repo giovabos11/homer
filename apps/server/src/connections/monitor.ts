@@ -87,11 +87,19 @@ export class ConnectionsMonitor {
     const pw = await this.probes.playwrightResolvable();
     push('playwright', pw ? 'ok' : 'down', pw ? '@playwright/mcp resolvable' : 'Run: npx @playwright/mcp (approve the install)');
 
-    // gmail — session-only by design (PRD D4).
-    push('gmail', 'waiting_session', 'Session-only connector: email tasks run when a Claude session is active');
+    // gmail — session-only by design (PRD D4). A recent successful probe
+    // (POST /api/connections/gmail/probe) upgrades the card to ok.
+    const probe = this.ctx.settings.getInternal<{ ok: boolean; detail: string; at: string } | null>('gmailProbe', null);
+    const probeFresh = probe && Date.now() - new Date(probe.at).getTime() < 6 * 3600000;
+    if (probeFresh && probe.ok) {
+      push('gmail', 'ok', probe.detail);
+    } else {
+      push('gmail', 'waiting_session', 'Session-only connector: email tasks run when a Claude session is active');
+    }
 
-    // chrome — manual/unknown by design: the user connects Claude in Chrome themselves.
-    push('chrome', 'disabled', 'Manual: connect via the Claude in Chrome extension when applying to hostile sites');
+    // chrome — manual/informational by design: the extension lives in the
+    // user's browser and cannot be probed from the server.
+    push('chrome', 'disabled', 'Manual — used via interactive sessions: install the Claude in Chrome extension and sign in with your claude.ai account');
 
     // portal skills
     const skills = new Map(discoverSkills(this.ctx.repoRoot).map((s) => [s.source, s]));

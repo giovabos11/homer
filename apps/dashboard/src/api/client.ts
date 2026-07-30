@@ -2,7 +2,7 @@ import type {
   Application, Connection, ConnectionName, CredentialMeta, EmailRecord, FeedbackEntry,
   FeedbackKind, Job, JobStatus, PrepTask, QueueTask, ScheduleEvent, Settings, SkillProgress, UserProfile,
 } from '@shared';
-import type { Api, ApplicationArtifacts, JobsQuery, QueueSnapshot, SearchBody } from './types';
+import type { Api, ApplicationArtifacts, GmailProbeResult, JobsQuery, QueueSnapshot, SearchBody, SetupStatus } from './types';
 import { mockApi } from './mock/mockApi';
 
 export const IS_MOCK = import.meta.env.VITE_MOCK === '1';
@@ -31,6 +31,8 @@ const post = <T>(path: string, body?: unknown) =>
   http<T>(path, { method: 'POST', body: body !== undefined ? JSON.stringify(body) : undefined });
 const patch = <T>(path: string, body: unknown) =>
   http<T>(path, { method: 'PATCH', body: JSON.stringify(body) });
+const put = <T>(path: string, body: unknown) =>
+  http<T>(path, { method: 'PUT', body: JSON.stringify(body) });
 const del = <T>(path: string) => http<T>(path, { method: 'DELETE' });
 
 function qs(params: Record<string, string | number | boolean | undefined | null>): string {
@@ -49,9 +51,19 @@ const realApi: Api = {
   setConnectionKey: (name: ConnectionName, key: string, appId?: string) =>
     post<Connection>(`/api/connections/${name}/key`, { key, ...(appId ? { appId } : {}) }),
   checkConnection: (name: ConnectionName) => post<Connection>(`/api/connections/${name}/check`),
+  probeGmail: () => post<GmailProbeResult>('/api/connections/gmail/probe'),
 
   getProfile: () => get<UserProfile>('/api/profile'),
+  patchProfile: (body) => patch<UserProfile>('/api/profile', body),
+  getProfileFile: (path: string) => get<{ path: string; content: string }>(`/api/profile/files${qs({ path })}`),
+  putProfileFile: (path: string, content: string) => put<{ ok: boolean }>('/api/profile/files', { path, content }),
+  regenerateQueries: () => post<{ requestId: string }>('/api/profile/regenerate-queries'),
   getArtifact: (path: string) => get<{ path: string; markdown: string }>(`/api/artifacts${qs({ path })}`),
+
+  setupStart: (mode) => post<{ requestId: string }>('/api/setup/start', { mode }),
+  setupMessage: (text: string) => post<{ requestId: string }>('/api/setup/message', { text }),
+  setupStatus: () => get<SetupStatus>('/api/setup/status'),
+  setupClear: () => post<{ ok: boolean }>('/api/setup/clear'),
 
   getJobs: (params: JobsQuery = {}) =>
     get<{ total: number; jobs: Job[] }>(
@@ -74,9 +86,13 @@ const realApi: Api = {
   createJob: (body: Partial<Job>) => post<Job>('/api/jobs', body),
   applyFromUrl: (url: string) => post<{ job: Job; taskId: number }>('/api/jobs/from-url', { url }),
   applyJob: (id: number) => post<{ taskId: number }>(`/api/jobs/${id}/apply`),
+  fetchJobDetails: (id: number) => post<{ job: Job }>(`/api/jobs/${id}/fetch-details`),
   skipJob: (id: number) => post<Job>(`/api/jobs/${id}/skip`),
 
-  getApplications: (params) => get<Application[]>(`/api/applications${qs({ status: params?.status, q: params?.q })}`),
+  getApplications: (params) =>
+    get<{ total: number; applications: Application[] }>(
+      `/api/applications${qs({ status: params?.status, q: params?.q, limit: params?.limit, offset: params?.offset })}`,
+    ),
   patchApplication: (id: number, body: { status?: JobStatus; notes?: string }) =>
     patch<Application>(`/api/applications/${id}`, body),
   approveApplication: (id: number) => post<{ taskId: number }>(`/api/applications/${id}/approve`),
@@ -86,6 +102,7 @@ const realApi: Api = {
 
   search: (body: SearchBody) => post<{ searchId: string }>('/api/search', body),
   getQueue: () => get<QueueSnapshot>('/api/queue'),
+  runDiscovery: () => post<{ taskId: number }>('/api/queue/run-discovery'),
   pauseQueue: () => post<QueueSnapshot>('/api/queue/pause'),
   resumeQueue: () => post<QueueSnapshot>('/api/queue/resume'),
   setQueueRate: (discoveryIntervalMinutes: number) =>
@@ -95,7 +112,14 @@ const realApi: Api = {
   cancelTask: (taskId: number) => post<QueueTask>(`/api/queue/tasks/${taskId}/cancel`),
 
   getEmails: (params) =>
-    get<EmailRecord[]>(`/api/emails${qs({ direction: params?.direction, classification: params?.classification })}`),
+    get<{ total: number; emails: EmailRecord[] }>(
+      `/api/emails${qs({
+        direction: params?.direction,
+        classification: params?.classification,
+        limit: params?.limit,
+        offset: params?.offset,
+      })}`,
+    ),
   getOutbox: () => get<EmailRecord[]>('/api/outbox'),
   approveOutbox: (id: number) => post<EmailRecord>(`/api/outbox/${id}/approve`),
   rejectOutbox: (id: number, reason?: string) => post<EmailRecord>(`/api/outbox/${id}/reject`, { reason }),
@@ -117,6 +141,7 @@ const realApi: Api = {
   getFeedback: () => get<FeedbackEntry[]>('/api/feedback'),
   applyPlanChange: (id: number) => post<FeedbackEntry>(`/api/feedback/${id}/apply-plan`),
   ask: (prompt: string) => post<{ requestId: string }>('/api/ask', { prompt }),
+  askClear: () => post<{ ok: boolean }>('/api/ask/clear'),
 
   getSettings: () => get<Settings>('/api/settings'),
   patchSettings: (body: Partial<Settings>) => patch<Settings>('/api/settings', body),

@@ -11,6 +11,8 @@ import { prepGuideWorker } from './prep-guide';
 import { profileSyncWorker } from './profile-sync';
 import { askWorker } from './ask';
 import { feedbackWorker } from './feedback';
+import { setupWorker } from './setup';
+import { regenQueriesWorker } from './regen-queries';
 
 export function registerAllWorkers(): void {
   registerWorker(discoveryWorker);
@@ -24,6 +26,8 @@ export function registerAllWorkers(): void {
   registerWorker(profileSyncWorker);
   registerWorker(askWorker);
   registerWorker(feedbackWorker);
+  registerWorker(setupWorker);
+  registerWorker(regenQueriesWorker);
 }
 
 export { PauseRequested, NeedsHuman, WaitingSession } from './registry';

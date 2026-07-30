@@ -11,7 +11,10 @@ export type LegitVerdict = 'legit' | 'suspicious' | 'scam' | 'unchecked';
 export type TaskState = 'pending' | 'running' | 'paused' | 'needs_human' | 'waiting_session' | 'done' | 'failed';
 export type TaskType =
   | 'discover' | 'score' | 'tailor' | 'apply' | 'email_scan'
-  | 'email_send' | 'followup' | 'prep_guide' | 'profile_sync' | 'ask' | 'feedback';
+  | 'email_send' | 'followup' | 'prep_guide' | 'profile_sync' | 'ask' | 'feedback'
+  | 'setup' | 'regen_queries';
+/** Claude model alias for a task family. 'default' = whatever the user's Claude Code defaults to. */
+export type ModelChoice = 'default' | 'haiku' | 'sonnet' | 'opus';
 export type EmailDirection = 'inbound' | 'outbound';
 export type EmailClass = 'reply_accepted' | 'reply_rejected' | 'interview_invite' | 'opportunity' | 'followup' | 'other';
 export type ConnectionName =
@@ -39,7 +42,7 @@ export interface Job {
   firstSeen: string;
   status: JobStatus;
   fitScore: number | null;      // 0-100 weighted
-  fitBreakdown: { technical: number; experience: number; behavioral: number; career: number; locationVeto: boolean } | null;
+  fitBreakdown: { technical: number; experience: number; behavioral: number; career: number; locationVeto: boolean; note?: string } | null;
   legitVerdict: LegitVerdict;
   legitReasons: string[];
   managed: 'auto' | 'manual';
@@ -171,6 +174,16 @@ export interface Settings {
   perSourceGates: Record<string, GateMode>;   // e.g. { linkedin: 'review' }
   followupAfterDays: number;
   maxFollowups: number;
+  /** Per-task model routing — cheaper models burn less subscription usage.
+   *  'default' (the user's own Claude Code model, possibly Opus) is selectable
+   *  but is no task's default. */
+  modelAsk: ModelChoice;        // ask-anything chat (default 'haiku')
+  modelSetup: ModelChoice;      // dashboard profile setup sessions (default 'sonnet')
+  modelScraper: ModelChoice;    // search-queries regeneration (default 'sonnet')
+  modelPipeline: ModelChoice;   // score / tailor / prep / email / feedback / followup workers (default 'sonnet')
+  /** Auto-advance screened jobs into the tailor pipeline (FR-9). */
+  autoAdvance: 'off' | 'threshold' | 'all';   // default 'threshold'
+  autoAdvanceThreshold: number;               // fit score gate for 'threshold' mode (default 70)
 }
 
 // ---- SSE events (GET /api/events, text/event-stream) ----
@@ -186,4 +199,5 @@ export type SseEvent =
   | { type: 'connection.updated'; connection: Connection }
   | { type: 'schedule.updated'; event: ScheduleEvent }
   | { type: 'ask.delta'; requestId: string; delta: string; done: boolean }
+  | { type: 'setup.delta'; requestId: string; delta: string; done: boolean }
   | { type: 'toast'; level: 'info' | 'success' | 'warning' | 'error'; message: string; celebrate?: boolean };

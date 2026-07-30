@@ -88,6 +88,9 @@ describe('discovered → screened → tailoring → ready_for_review → approve
     });
 
     // 2) Score (MockRunner rubric reply, weighted in code: 30/25/15/30).
+    // This test exercises the MANUAL apply path — disable FR-9 auto-advance so
+    // the drain below stops at 'screened' (auto-advance has its own test file).
+    world.ctx.settings.patch({ autoAdvance: 'off' });
     world.ctx.queue.enqueue('score', { payload: { jobId: job.id } });
     await world.runner.drain();
     let row = world.ctx.db.select().from(jobs).where(eq(jobs.id, job.id)).get()!;

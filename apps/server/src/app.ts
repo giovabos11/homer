@@ -11,6 +11,7 @@ import { emailRoutes } from './api/emails';
 import { scheduleRoutes } from './api/schedule';
 import { credentialRoutes } from './api/credentials';
 import { miscRoutes } from './api/misc';
+import { setupRoutes } from './api/setup';
 import { resetRoutes } from './api/reset';
 import { internalRoutes } from './api/internal';
 import { eventRoutes } from './api/events';
@@ -33,6 +34,7 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api', scheduleRoutes(ctx));
   app.use('/api', credentialRoutes(ctx));
   app.use('/api', miscRoutes(ctx));
+  app.use('/api', setupRoutes(ctx));
   app.use('/api', resetRoutes(ctx));
   app.use('/api', internalRoutes(ctx));
 

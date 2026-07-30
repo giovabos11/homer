@@ -137,6 +137,7 @@ export const prepGuideWorker: Worker = {
         prompt: buildGuidePrompt(ctx, event, job ?? null),
         cwd: ctx.repoRoot,
         allowedTools: ['WebSearch', 'WebFetch'],
+        model: ctx.settings.get().modelPipeline,
         timeoutMs: ctx.config.agent.defaultTimeoutMs,
       });
       const parsed = guideSchema.safeParse(result.structured);

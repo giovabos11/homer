@@ -1,6 +1,6 @@
 // Emails + outbox routes (contract §Emails & outbox — FR-2, FR-11, FR-20).
 import { Router } from 'express';
-import { and, desc, eq, type SQL } from 'drizzle-orm';
+import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { emails } from '../db/schema';
 import { toEmail } from '../db/serialize';
@@ -17,19 +17,25 @@ export function emailRoutes(ctx: AppContext): Router {
         classification: z
           .enum(['reply_accepted', 'reply_rejected', 'interview_invite', 'opportunity', 'followup', 'other'])
           .optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(50),
+        offset: z.coerce.number().int().min(0).default(0),
       }),
       req,
     );
     const filters: SQL[] = [];
     if (q.direction) filters.push(eq(emails.direction, q.direction));
     if (q.classification) filters.push(eq(emails.classification, q.classification));
+    const where = filters.length > 0 ? and(...filters) : undefined;
+    const total = ctx.db.select({ n: sql<number>`count(*)` }).from(emails).where(where).get()?.n ?? 0;
     const rows = ctx.db
       .select()
       .from(emails)
-      .where(filters.length > 0 ? and(...filters) : undefined)
+      .where(where)
       .orderBy(desc(emails.id))
+      .limit(q.limit)
+      .offset(q.offset)
       .all();
-    res.json(rows.map(toEmail));
+    res.json({ total, emails: rows.map(toEmail) });
   });
 
   // Outbox = outbound drafts awaiting approval (FR-11: nothing sends without one).

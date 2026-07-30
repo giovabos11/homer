@@ -122,8 +122,14 @@ const DraggableCard = forwardRef<HTMLDivElement, { job: Job; app?: Application }
   );
 });
 
+/** Render cap per column — heavy columns collapse behind a "Show all" expander. */
+const COLUMN_CARD_CAP = 30;
+
 function BoardColumn({ column, jobs, appsByJob }: { column: Column; jobs: Job[]; appsByJob: Map<number, Application> }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.key });
+  const [showAll, setShowAll] = useState(false);
+  const capped = !showAll && jobs.length > COLUMN_CARD_CAP;
+  const visible = capped ? jobs.slice(0, COLUMN_CARD_CAP) : jobs;
   return (
     <div className="flex flex-col w-[264px] shrink-0 max-h-full">
       <div className="flex items-center gap-2 px-1.5 pb-2">
@@ -144,10 +150,18 @@ function BoardColumn({ column, jobs, appsByJob }: { column: Column; jobs: Job[];
         )}
       >
         <AnimatePresence mode="popLayout">
-          {jobs.map((j) => (
+          {visible.map((j) => (
             <DraggableCard key={j.id} job={j} app={appsByJob.get(j.id)} />
           ))}
         </AnimatePresence>
+        {capped && (
+          <button
+            onClick={() => setShowAll(true)}
+            className="w-full rounded-lg border border-dashed border-line-strong/70 px-2 py-2 text-[11px] font-medium text-ink-3 hover:text-ink hover:bg-overlay/60 transition-colors cursor-pointer"
+          >
+            Show all {jobs.length}
+          </button>
+        )}
         {jobs.length === 0 && (
           <div className="flex flex-col items-center justify-center py-6 text-ink-3/70">
             <Inbox className="h-4 w-4 mb-1" />

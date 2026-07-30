@@ -8,6 +8,8 @@ import { toFeedbackEntry } from '../db/serialize';
 import type { AppContext } from '../context';
 import { ApiError, idParam, parseBody } from './util';
 
+const modelChoiceSchema = z.enum(['default', 'haiku', 'sonnet', 'opus']);
+
 const settingsPatchSchema = z
   .object({
     gateMode: z.enum(['review', 'auto', 'hybrid']),
@@ -19,6 +21,12 @@ const settingsPatchSchema = z
     perSourceGates: z.record(z.string(), z.enum(['review', 'auto', 'hybrid'])),
     followupAfterDays: z.number().int().min(1).max(60),
     maxFollowups: z.number().int().min(0).max(10),
+    modelAsk: modelChoiceSchema,
+    modelSetup: modelChoiceSchema,
+    modelScraper: modelChoiceSchema,
+    modelPipeline: modelChoiceSchema,
+    autoAdvance: z.enum(['off', 'threshold', 'all']),
+    autoAdvanceThreshold: z.number().int().min(0).max(100),
   })
   .partial()
   .strict();
@@ -87,11 +95,19 @@ export function miscRoutes(ctx: AppContext): Router {
   });
 
   // FR-29: ask-anything — response streams via ask.delta SSE events.
+  // Conversational: the ask worker resumes the stored session (internal
+  // askSessionId) unless the request pins its own sessionId.
   router.post('/ask', (req, res) => {
     const body = parseBody(z.object({ prompt: z.string().min(1), sessionId: z.string().optional() }), req);
     const requestId = crypto.randomUUID();
     ctx.queue.enqueue('ask', { payload: { requestId, prompt: body.prompt, sessionId: body.sessionId } });
     res.json({ requestId });
+  });
+
+  // Drop the stored ask session — the next ask starts a fresh conversation.
+  router.post('/ask/clear', (_req, res) => {
+    ctx.settings.setInternal('askSessionId', null);
+    res.json({ ok: true });
   });
 
   router.get('/settings', (_req, res) => {

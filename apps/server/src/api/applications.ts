@@ -1,7 +1,7 @@
 // Applications routes (contract §Applications — FR-9, FR-16, FR-19, FR-25).
 import path from 'node:path';
 import { Router } from 'express';
-import { and, desc, eq, like, or, type SQL } from 'drizzle-orm';
+import { and, desc, eq, like, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { applications, jobs } from '../db/schema';
 import { toApplication } from '../db/serialize';
@@ -18,21 +18,39 @@ export function applicationRoutes(ctx: AppContext): Router {
   const router = Router();
 
   router.get('/applications', (req, res) => {
-    const q = parseQuery(z.object({ status: z.string().optional(), q: z.string().optional() }), req);
+    const q = parseQuery(
+      z.object({
+        status: z.string().optional(),
+        q: z.string().optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(50),
+        offset: z.coerce.number().int().min(0).default(0),
+      }),
+      req,
+    );
     const filters: SQL[] = [];
     if (q.status) filters.push(eq(applications.status, q.status));
     if (q.q) {
       const term = `%${q.q}%`;
       filters.push(or(like(jobs.company, term), like(jobs.title, term))!);
     }
+    const where = filters.length > 0 ? and(...filters) : undefined;
+    const total =
+      ctx.db
+        .select({ n: sql<number>`count(*)` })
+        .from(applications)
+        .innerJoin(jobs, eq(jobs.id, applications.jobId))
+        .where(where)
+        .get()?.n ?? 0;
     const rows = ctx.db
       .select({ app: applications, job: jobs })
       .from(applications)
       .innerJoin(jobs, eq(jobs.id, applications.jobId))
-      .where(filters.length > 0 ? and(...filters) : undefined)
+      .where(where)
       .orderBy(desc(applications.updatedAt))
+      .limit(q.limit)
+      .offset(q.offset)
       .all();
-    res.json(rows.map(({ app, job }) => toApplication(app, job)));
+    res.json({ total, applications: rows.map(({ app, job }) => toApplication(app, job)) });
   });
 
   // Kanban drag = status change; notes are append-only.

@@ -444,6 +444,12 @@ export const SETTINGS: Settings = {
   perSourceGates: { linkedin: 'review' },
   followupAfterDays: 10,
   maxFollowups: 2,
+  modelAsk: 'haiku',
+  modelSetup: 'sonnet',
+  modelScraper: 'sonnet',
+  modelPipeline: 'sonnet',
+  autoAdvance: 'threshold',
+  autoAdvanceThreshold: 70,
 };
 
 export const FEEDBACK: FeedbackEntry[] = [
