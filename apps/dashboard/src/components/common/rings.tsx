@@ -1,5 +1,8 @@
+import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import { scoreTone } from '@/lib/format';
+import { Tip } from '@/components/ui/controls';
+import { useStore } from '@/store/useStore';
 
 const TONE_COLOR: Record<string, string> = {
   good: 'var(--good)',
@@ -65,5 +68,26 @@ export function FitRing({ score, size = 36, className }: { score: number | null;
       label={score == null ? '·' : String(score)}
       className={className}
     />
+  );
+}
+
+/**
+ * What-does-this-number-mean tooltip for fit scores. Wrap the ring in a plain
+ * span so Radix's asChild trigger can attach its handlers.
+ */
+export function FitScoreTip({ children, className }: { children: ReactNode; className?: string }) {
+  const threshold = useStore((s) => s.settings?.autoAdvanceThreshold ?? 70);
+  return (
+    <Tip
+      label={
+        <span>
+          Fit vs YOUR profile: technical 30% · experience 25% · behavioral 15% · career direction 30%.
+          <br />
+          {threshold}+ auto-advances; senior/unrelated roles score low by design.
+        </span>
+      }
+    >
+      <span className={cn('inline-flex shrink-0 cursor-default', className)}>{children}</span>
+    </Tip>
   );
 }

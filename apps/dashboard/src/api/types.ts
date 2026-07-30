@@ -1,7 +1,7 @@
 import type {
   Application, Connection, ConnectionName, CredentialMeta, EmailRecord, FeedbackEntry,
   FeedbackKind, Job, JobStatus, PrepTask, QueueTask, RemoteType, ScheduleEvent,
-  Settings, SkillProgress, SourceBudget, UserProfile,
+  ScheduleNextRuns, Settings, SkillProgress, SourceBudget, TaskType, UserProfile,
 } from '@shared';
 
 export interface JobsQuery {
@@ -29,6 +29,7 @@ export interface QueueSnapshot {
   tasks: QueueTask[];
   budgets: SourceBudget[];
   paused: boolean;
+  nextRuns?: ScheduleNextRuns;
 }
 
 export interface ApplicationArtifacts {
@@ -78,6 +79,7 @@ export interface Api {
   applyJob(id: number): Promise<{ taskId: number }>;
   fetchJobDetails(id: number): Promise<{ job: Job }>;
   skipJob(id: number): Promise<Job>;
+  overrideLegit(id: number, note: string): Promise<{ job: Job; taskId: number | null }>;
   // applications
   getApplications(params?: { status?: string; q?: string; limit?: number; offset?: number }): Promise<{ total: number; applications: Application[] }>;
   patchApplication(id: number, body: { status?: JobStatus; notes?: string }): Promise<Application>;
@@ -94,6 +96,7 @@ export interface Api {
   resolveHuman(taskId: number): Promise<QueueTask>;
   retryTask(taskId: number): Promise<QueueTask>;
   cancelTask(taskId: number): Promise<QueueTask>;
+  retryFailed(type?: TaskType): Promise<{ requeued: number }>;
   // emails
   getEmails(params?: { direction?: string; classification?: string; limit?: number; offset?: number }): Promise<{ total: number; emails: EmailRecord[] }>;
   getOutbox(): Promise<EmailRecord[]>;

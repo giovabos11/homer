@@ -7,7 +7,9 @@
 //  - Legitimacy: structural signals are computed in code BEFORE any agent call
 //    (mass-posting duplicates, salary outliers, scam keywords, free-mail contact
 //    domains); the agent adds web verification of company existence. Worst
-//    verdict wins. scam → quarantined; suspicious → review required pre-apply.
+//    verdict wins, but structural signals alone cap at 'suspicious' — a scam
+//    verdict (→ quarantined) requires the agent verification to concur.
+//    suspicious → review required pre-apply.
 //  - The job description is UNTRUSTED third-party data and is always passed
 //    through fenceUntrusted() (PRD §8) — never as instructions.
 //  - SIMULATE=1 keeps deterministic pseudo-scores so dashboard demos work
@@ -16,6 +18,7 @@ import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import type { LegitVerdict } from '@shared/types';
 import { fenceUntrusted, readRepoFile, strictJsonFooter } from '../agent/prompts';
+import { runStructured } from '../agent/structured';
 import { mergeVerdicts, structuralSignals, verdictFromSignals } from '../pipeline/legitimacy';
 import { applications, taskQueue } from '../db/schema';
 import { toJob } from '../db/serialize';
@@ -179,10 +182,12 @@ function buildScorePrompt(ctx: AppContext, job: JobRow): string {
 export const scoreWorker: Worker = {
   type: 'score',
   async run({ ctx, task }: WorkerArgs): Promise<void> {
-    const payload = JSON.parse(task.payloadJson) as { jobId?: number; fetchUrl?: string };
+    const payload = JSON.parse(task.payloadJson) as { jobId?: number; fetchUrl?: string; rescore?: boolean };
     let job = payload.jobId != null ? getJob(ctx, payload.jobId) : null;
     if (!job) return; // job deleted → nothing to do
-    if (job.status !== 'discovered') return; // already progressed
+    // rescore: explicit re-evaluation (e.g. after a legitimacy override) of a
+    // job that already progressed past 'discovered'.
+    if (job.status !== 'discovered' && !payload.rescore) return; // already progressed
 
     if (ctx.simulate) {
       await sleep(200); // visible transition for the dashboard demo
@@ -221,35 +226,27 @@ export const scoreWorker: Worker = {
     const descriptionUnavailable = !job.descriptionMd;
 
     // 1) Structural legitimacy signals — computed in code, never model-dependent.
+    //    They cap at 'suspicious' on their own: quarantining requires the agent
+    //    verification below to concur with a scam verdict.
     const signals = structuralSignals(ctx.db, job);
     const structuralVerdict = verdictFromSignals(signals);
     const structuralReasons = signals.map((s) => s.reason);
 
-    // Hard structural scam → quarantine without spending an agent run.
-    if (structuralVerdict === 'scam') {
-      const row = updateJob(ctx, job.id, {
-        status: 'quarantined',
-        legitVerdict: 'scam',
-        legitReasonsJson: JSON.stringify(structuralReasons),
-      });
-      ctx.bus.emit({ type: 'job.scored', job: toJob(row) });
-      ctx.bus.emit({ type: 'toast', level: 'warning', message: `Quarantined ${job.company} — ${job.title} (scam signals)` });
-      return;
-    }
-
     // 2) Agent evaluation: rubric scoring + web verification of legitimacy.
-    const result = await ctx.runner.run({
-      prompt: buildScorePrompt(ctx, job),
-      cwd: ctx.repoRoot,
-      allowedTools: ['WebSearch', 'WebFetch'],
-      model: ctx.settings.get().modelPipeline,
-      timeoutMs: ctx.config.agent.defaultTimeoutMs,
-    });
-    const parsed = scoreResultSchema.safeParse(result.structured);
-    if (!parsed.success) {
-      throw new Error(`Score agent returned unparseable output: ${parsed.error.issues[0]?.message ?? 'no JSON'}`);
-    }
-    const r = parsed.data;
+    //    runStructured = layered JSON extraction + one corrective retry + raw
+    //    output preserved in the error (→ task lastError) on final failure.
+    const r = await runStructured(
+      ctx.runner,
+      {
+        prompt: buildScorePrompt(ctx, job),
+        cwd: ctx.repoRoot,
+        allowedTools: ['WebSearch', 'WebFetch'],
+        model: ctx.settings.get().modelPipeline,
+        timeoutMs: ctx.config.agent.defaultTimeoutMs,
+      },
+      scoreResultSchema,
+      'Score agent',
+    );
 
     const fitScore = descriptionUnavailable
       ? Math.min(weightedFitScore(r), NO_DESCRIPTION_SCORE_CAP)

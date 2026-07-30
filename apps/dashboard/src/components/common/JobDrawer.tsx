@@ -4,14 +4,15 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer,
 } from 'recharts';
-import { DownloadCloud, ExternalLink, Info, Loader2, MapPin, Rocket, SkipForward, X } from 'lucide-react';
+import { DownloadCloud, ExternalLink, Info, Loader2, MapPin, Rocket, ShieldAlert, ShieldCheck, ShieldX, SkipForward, X } from 'lucide-react';
 import type { Job } from '@shared';
 import { api } from '@/api/client';
 import { useStore } from '@/store/useStore';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { Markdown } from '@/components/common/Markdown';
-import { FitRing } from '@/components/common/rings';
+import { FitRing, FitScoreTip } from '@/components/common/rings';
 import { LegitBadge, SourceIcon, StatusPill, sourceLabel } from '@/components/common/chips';
 import { REMOTE_LABEL, salaryLabel, fmtDate } from '@/lib/format';
 
@@ -73,6 +74,86 @@ function FitRadar({ job }: { job: Job }) {
   );
 }
 
+/**
+ * Suspicious/scam review panel: the reasons the pipeline flagged this job,
+ * plus the human escape hatch — structural heuristics never get the last word.
+ */
+function LegitReviewPanel({ job, onUpdated }: { job: Job; onUpdated: (j: Job) => void }) {
+  const close = useJobDrawer((s) => s.close);
+  const pushToast = useStore((s) => s.pushToast);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const scam = job.legitVerdict === 'scam';
+  const Icon = scam ? ShieldX : ShieldAlert;
+
+  return (
+    <div
+      className={`rounded-xl border p-3.5 ${
+        scam ? 'border-critical/40 bg-critical/8' : 'border-warn-raw/45 bg-warn-raw/10'
+      }`}
+    >
+      <div className="flex items-start gap-2.5">
+        <Icon className={`h-4.5 w-4.5 shrink-0 mt-0.5 ${scam ? 'text-critical' : 'text-warn'}`} />
+        <div className="flex-1 min-w-0">
+          <p className="text-[13px] font-semibold text-ink">
+            {scam ? 'Quarantined as a possible scam' : 'Flagged suspicious'} — your call
+          </p>
+          <ul className="mt-1.5 space-y-1">
+            {job.legitReasons.map((r, i) => (
+              <li key={i} className="text-xs text-ink-2 leading-relaxed flex gap-1.5">
+                <span className={scam ? 'text-critical' : 'text-warn'}>•</span>
+                {r}
+              </li>
+            ))}
+            {job.legitReasons.length === 0 && (
+              <li className="text-xs text-ink-3">No recorded reasons — treat with care.</li>
+            )}
+          </ul>
+          <div className="mt-2.5 space-y-2">
+            <Input
+              placeholder="Why is it legit? e.g. verified posting on the company careers site"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                disabled={busy || note.trim().length === 0}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    const res = await api.overrideLegit(job.id, note.trim());
+                    useStore.getState().upsertJob(res.job);
+                    onUpdated(res.job);
+                    pushToast(
+                      'success',
+                      res.taskId != null
+                        ? `${job.company} marked legit — rescoring now`
+                        : `${job.company} marked legit — back in Screened`,
+                    );
+                  } catch (err) {
+                    pushToast('error', `Override failed: ${err instanceof Error ? err.message : 'unknown error'}`);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                Mark as legit & rescore
+              </Button>
+              {job.status === 'quarantined' && (
+                <Button size="sm" variant="ghost" onClick={close}>
+                  Keep quarantined
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function JobDrawer() {
   const jobId = useJobDrawer((s) => s.jobId);
   const close = useJobDrawer((s) => s.close);
@@ -124,7 +205,9 @@ export function JobDrawer() {
             className="fixed right-0 top-0 bottom-0 z-50 w-[560px] max-w-[92vw] bg-surface border-l border-line shadow-[var(--shadow-pop)] flex flex-col"
           >
             <div className="px-5 pt-4 pb-3 border-b border-line flex items-start gap-3">
-              <FitRing score={job.fitScore} size={46} />
+              <FitScoreTip>
+                <FitRing score={job.fitScore} size={46} />
+              </FitScoreTip>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h2 className="text-base font-semibold text-ink truncate">{job.title}</h2>
@@ -158,9 +241,13 @@ export function JobDrawer() {
                 {job.managed === 'manual' && <Badge variant="violet">manual — automation hands off</Badge>}
               </div>
 
+              {(job.legitVerdict === 'suspicious' || job.legitVerdict === 'scam') && (
+                <LegitReviewPanel job={job} onUpdated={setDetail} />
+              )}
+
               {job.fitBreakdown && <FitRadar job={job} />}
 
-              {job.legitVerdict !== 'unchecked' && job.legitReasons.length > 0 && (
+              {job.legitVerdict === 'legit' && job.legitReasons.length > 0 && (
                 <div>
                   <h3 className="text-xs font-semibold text-ink uppercase tracking-wide mb-1.5">
                     Legitimacy — {job.legitVerdict}
@@ -168,7 +255,7 @@ export function JobDrawer() {
                   <ul className="space-y-1">
                     {job.legitReasons.map((r, i) => (
                       <li key={i} className="text-xs text-ink-2 flex gap-1.5">
-                        <span className={job.legitVerdict === 'scam' ? 'text-critical' : 'text-good'}>•</span>
+                        <span className="text-good">•</span>
                         {r}
                       </li>
                     ))}

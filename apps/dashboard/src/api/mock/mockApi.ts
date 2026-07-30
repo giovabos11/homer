@@ -528,9 +528,42 @@ export const mockApi: Api = {
     await delay();
     const j = S.jobs.find((x) => x.id === id);
     if (!j) throw new Error('job not found');
-    j.status = 'skipped';
-    toast('info', `Skipped ${j.company}`);
+    // Scam-verdict jobs stay quarantined (findable for manual review).
+    j.status = j.legitVerdict === 'scam' ? 'quarantined' : 'skipped';
+    toast('info', j.status === 'quarantined' ? `${j.company} kept in quarantine` : `Skipped ${j.company}`);
     return structuredClone(j);
+  },
+
+  async overrideLegit(id: number, note: string) {
+    await delay();
+    const j = S.jobs.find((x) => x.id === id);
+    if (!j) throw new Error('job not found');
+    j.legitVerdict = 'legit';
+    j.legitReasons = [...j.legitReasons, `[user override: ${note}]`];
+    j.status = 'screened';
+    let taskId: number | null = null;
+    if (j.fitScore == null) {
+      const task: QueueTask = {
+        id: nextId++, type: 'score', state: 'pending', payload: { jobId: id, rescore: true },
+        cursor: null, runAfter: null, attempts: 0, lastError: null, humanPrompt: null,
+        createdAt: now(), updatedAt: now(),
+      };
+      S.tasks.unshift(task);
+      taskId = task.id;
+      mockBus.emit({ type: 'queue.updated', task: structuredClone(task) });
+      setTimeout(() => {
+        task.state = 'done';
+        task.updatedAt = now();
+        j.fitScore = 72;
+        j.fitBreakdown = { technical: 76, experience: 64, behavioral: 78, career: 72, locationVeto: false };
+        mockBus.emit({ type: 'queue.updated', task: structuredClone(task) });
+        mockBus.emit({ type: 'job.scored', job: structuredClone(j) });
+        toast('success', `${j.company} rescored after your override`);
+      }, 2200);
+    }
+    mockBus.emit({ type: 'job.scored', job: structuredClone(j) });
+    toast('success', `${j.company} marked legit — back in Screened`);
+    return { job: structuredClone(j), taskId };
   },
 
   async getApplications(params) {
@@ -723,6 +756,22 @@ export const mockApi: Api = {
     t.updatedAt = now();
     mockBus.emit({ type: 'queue.updated', task: structuredClone(t) });
     return structuredClone(t);
+  },
+
+  async retryFailed(type) {
+    await delay();
+    const targets = S.tasks.filter(
+      (t) => t.state === 'failed' && t.lastError !== 'Cancelled by user' && (!type || t.type === type),
+    );
+    for (const t of targets) {
+      t.state = 'pending';
+      t.attempts = 0;
+      t.lastError = null;
+      t.updatedAt = now();
+    }
+    mockBus.emit({ type: 'queue.snapshot', ...snapshot() });
+    toast('info', `${targets.length} failed task${targets.length === 1 ? '' : 's'} requeued`);
+    return { requeued: targets.length };
   },
 
   async getEmails(params) {

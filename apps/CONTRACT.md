@@ -33,7 +33,8 @@ All request/response shapes use the types in `apps/shared/types.ts`. All respons
 - `POST /api/jobs/from-url` body `{ url: string }` → `{ job: Job, taskId: number }` — parses, saves, scores, enters apply pipeline (FR-4)
 - `POST /api/jobs/:id/apply` → `{ taskId }` — start tailoring+apply for a discovered job (manual override; screened jobs that clear the `autoAdvance` gate enter tailoring automatically after scoring)
 - `POST /api/jobs/:id/fetch-details` → `{ job: Job }` — on-demand description backfill: runs the source portal's `detail` command; falls back to an agent (haiku + WebFetch) extraction of the canonical URL treated as untrusted data. Emits a `job.scored` SSE refresh.
-- `POST /api/jobs/:id/skip` → `Job`
+- `POST /api/jobs/:id/skip` → `Job` (scam-verdict jobs stay `quarantined` instead of `skipped` so they remain findable for manual review)
+- `POST /api/jobs/:id/override-legit` body `{ verdict: 'legit', note: string }` → `{ job: Job, taskId: number | null }` — manual legitimacy override after user review: verdict → legit with `[user override: <note>]` appended to `legitReasons`, status → `screened`; when the job has no `fitScore` yet a rescore task is enqueued (`taskId`). Structural signals alone cap at `suspicious` — a `scam` verdict (→ quarantine) requires the agent verification to concur; this endpoint is the human escape hatch for both.
 
 ## Applications
 - `GET  /api/applications?status&q&limit&offset` → `{ total: number, applications: Application[] }` (default limit 50, max 500; ordered by last update)
@@ -44,12 +45,14 @@ All request/response shapes use the types in `apps/shared/types.ts`. All respons
 
 ## Search & queue
 - `POST /api/search` body `{ keywords, experience?, remote?: RemoteType, location?, sources?: string[] }` → `{ searchId }`; results stream as `job.discovered` SSE events  (FR-3)
-- `GET  /api/queue` → `{ tasks: QueueTask[], budgets: SourceBudget[], paused: boolean }`
+- `GET  /api/queue` → `{ tasks: QueueTask[], budgets: SourceBudget[], paused: boolean, nextRuns: { discover, emailScan, followup } }` (`nextRuns` = next scheduled sweep times, ISO or null — drives the dashboard's idle state)
 - `POST /api/queue/run-discovery` → `{ taskId }` — enqueue a discovery sweep immediately (budgets still respected); if a discover task is already pending/running, returns that task's id instead of enqueueing another
 - `POST /api/queue/pause` / `POST /api/queue/resume` → queue snapshot
 - `POST /api/queue/rate` body `{ discoveryIntervalMinutes }` → `Settings`
+- `POST /api/queue/retry-failed` body `{ type?: TaskType }` → `{ requeued: number }` — bulk retry: every failed task (optionally filtered to one type) back to `pending` with `attempts` reset to 0; explicit user cancellations (`lastError: 'Cancelled by user'`) are left alone. Emits a fresh `queue.snapshot`.
 - `POST /api/queue/tasks/:id/resolve-human` → `QueueTask` (user did the manual step; worker resumes)  (FR-25)
 - `POST /api/queue/tasks/:id/retry` / `POST /api/queue/tasks/:id/cancel` → `QueueTask`
+- Zombie recovery (server-side, no endpoint): on boot every `running` claim is requeued to `pending` (`attempts` preserved, `lastError: 'reclaimed after stale run'`), and a periodic sweep requeues `running` tasks whose `updatedAt` is older than 10 minutes. Jobs stuck in `tailoring` with no live tailor task revert to `screened` (toast + `job.scored` SSE).
 
 ## Emails & outbox
 - `GET  /api/emails?direction&classification&limit&offset` → `{ total: number, emails: EmailRecord[] }` (default limit 50, max 500; newest first)  (FR-20)

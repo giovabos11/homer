@@ -88,6 +88,8 @@ const realApi: Api = {
   applyJob: (id: number) => post<{ taskId: number }>(`/api/jobs/${id}/apply`),
   fetchJobDetails: (id: number) => post<{ job: Job }>(`/api/jobs/${id}/fetch-details`),
   skipJob: (id: number) => post<Job>(`/api/jobs/${id}/skip`),
+  overrideLegit: (id: number, note: string) =>
+    post<{ job: Job; taskId: number | null }>(`/api/jobs/${id}/override-legit`, { verdict: 'legit', note }),
 
   getApplications: (params) =>
     get<{ total: number; applications: Application[] }>(
@@ -110,6 +112,7 @@ const realApi: Api = {
   resolveHuman: (taskId: number) => post<QueueTask>(`/api/queue/tasks/${taskId}/resolve-human`),
   retryTask: (taskId: number) => post<QueueTask>(`/api/queue/tasks/${taskId}/retry`),
   cancelTask: (taskId: number) => post<QueueTask>(`/api/queue/tasks/${taskId}/cancel`),
+  retryFailed: (type) => post<{ requeued: number }>('/api/queue/retry-failed', type ? { type } : {}),
 
   getEmails: (params) =>
     get<{ total: number; emails: EmailRecord[] }>(

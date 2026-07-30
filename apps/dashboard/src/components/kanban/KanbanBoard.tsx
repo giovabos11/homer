@@ -13,7 +13,7 @@ import { salaryLabel, STATUS_LABEL } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { FitRing } from '@/components/common/rings';
+import { FitRing, FitScoreTip } from '@/components/common/rings';
 import { LegitBadge, SourceIcon } from '@/components/common/chips';
 import { useJobDrawer } from '@/components/common/JobDrawer';
 import { ReviewDialog } from './ReviewDialog';
@@ -64,7 +64,9 @@ function KanbanCard({ job, app, dragging }: { job: Job; app?: Application; dragg
           <p className="text-[13px] font-medium text-ink leading-snug truncate">{job.title}</p>
           <p className="text-xs text-ink-3 truncate mt-0.5">{job.company}</p>
         </div>
-        <FitRing score={job.fitScore} size={30} />
+        <FitScoreTip>
+          <FitRing score={job.fitScore} size={30} />
+        </FitScoreTip>
       </div>
       <div className="flex items-center gap-1.5 mt-2 flex-wrap">
         {salary && (

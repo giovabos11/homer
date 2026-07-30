@@ -86,6 +86,8 @@ export class ClaudeCodeRunner implements AgentRunner {
       let stderr = '';
       let buffer = '';
       let settled = false;
+      let isError = false;
+      let resultSubtype: string | undefined;
 
       const timer = setTimeout(() => {
         if (settled) return;
@@ -111,8 +113,12 @@ export class ClaudeCodeRunner implements AgentRunner {
             if (block.type === 'text' && block.text) assistantText += block.text;
           }
         }
-        if (event.type === 'result' && typeof event.result === 'string') {
-          resultText = event.result;
+        if (event.type === 'result') {
+          if (typeof event.result === 'string') resultText = event.result;
+          // Usage-limit / max-turns / execution errors: the result text is an
+          // error notice, not an answer — flag it so callers don't try to parse it.
+          if (event.is_error === true) isError = true;
+          if (typeof event.subtype === 'string') resultSubtype = event.subtype;
         }
         opts.onEvent?.(event as { type: string });
       };
@@ -149,7 +155,7 @@ export class ClaudeCodeRunner implements AgentRunner {
           return;
         }
         const text = resultText || assistantText;
-        resolve({ text, sessionId, structured: extractStructured(text) });
+        resolve({ text, sessionId, structured: extractStructured(text), isError, resultSubtype });
       });
 
       child.stdin.write(opts.prompt);

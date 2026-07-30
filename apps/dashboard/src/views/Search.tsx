@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  AlertTriangle, ChevronLeft, ChevronRight, Download, Gauge, HandHelping, Link2, Loader2,
-  Pause, PenLine, Play, Radar, RefreshCw, RotateCcw, Search as SearchIcon, Table2,
+  AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, Download, Gauge, HandHelping,
+  Link2, Loader2, Pause, PenLine, Play, Radar, RotateCcw, Search as SearchIcon, Table2,
   Wand2, XCircle,
 } from 'lucide-react';
-import type { Job, JobStatus, RemoteType } from '@shared';
+import type { Job, JobStatus, QueueTask, RemoteType } from '@shared';
 import { api } from '@/api/client';
 import { useStore } from '@/store/useStore';
 import { downloadCsv } from '@/lib/csv';
+import { humanizeTask } from '@/lib/tasks';
 import { fmtRelative, REMOTE_LABEL, salaryLabel, STATUS_LABEL, titleCase } from '@/lib/format';
 import { Card, CardHeader, EmptyState, PageHeader } from '@/components/common/layout';
 import { Badge } from '@/components/ui/badge';
@@ -304,6 +305,92 @@ function ManualAdd() {
 }
 
 /* --------------------------------- Queue panel --------------------------------- */
+const GROUP_PAGE = 20;
+
+/** Collapsible task group with load-more past GROUP_PAGE rows. */
+function TaskGroup({
+  label,
+  tone,
+  tasks,
+  defaultOpen = true,
+  right,
+  renderRow,
+}: {
+  label: string;
+  tone: string;
+  tasks: QueueTask[];
+  defaultOpen?: boolean;
+  right?: React.ReactNode;
+  renderRow: (t: QueueTask) => React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const [limit, setLimit] = useState(GROUP_PAGE);
+  if (tasks.length === 0) return null;
+  const visible = tasks.slice(0, limit);
+  return (
+    <div>
+      <div className="flex items-center gap-2 py-0.5">
+        <button
+          onClick={() => setOpen((o) => !o)}
+          className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-2 hover:text-ink transition-colors cursor-pointer"
+        >
+          <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? '' : '-rotate-90'}`} />
+          <span className="h-1.5 w-1.5 rounded-full" style={{ background: tone }} />
+          {label}
+          <span className="text-ink-3 tabular">({tasks.length})</span>
+        </button>
+        <span className="ml-auto">{right}</span>
+      </div>
+      {open && (
+        <div className="space-y-1 mt-1">
+          {visible.map(renderRow)}
+          {tasks.length > limit && (
+            <button
+              onClick={() => setLimit((l) => l + GROUP_PAGE)}
+              className="w-full rounded-md border border-dashed border-line-strong/70 px-2 py-1.5 text-[11px] font-medium text-ink-3 hover:text-ink hover:bg-overlay/60 transition-colors cursor-pointer"
+            >
+              Show {Math.min(GROUP_PAGE, tasks.length - limit)} more ({tasks.length - limit} hidden)
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PlainTaskRow({ t }: { t: QueueTask }) {
+  const jobs = useStore((s) => s.jobs);
+  const applications = useStore((s) => s.applications);
+  return (
+    <div className="flex items-center gap-2 text-xs rounded-md px-2 py-1.5 bg-overlay/50 border border-line/60">
+      <span
+        className={`h-1.5 w-1.5 rounded-full shrink-0 ${t.state === 'running' ? 'status-pulse' : ''}`}
+        style={{
+          background:
+            t.state === 'running' ? 'var(--good)'
+              : t.state === 'waiting_session' ? 'var(--series-7)'
+                : t.state === 'paused' ? 'var(--warn-raw)' : 'var(--ink-3)',
+          ['--pulse-color' as string]: 'var(--good)',
+        }}
+      />
+      <span className="text-ink-2 truncate flex-1">{humanizeTask(t, jobs, applications)}</span>
+      {t.attempts > 0 && (
+        <Tip label={t.lastError ?? `${t.attempts} attempt${t.attempts === 1 ? '' : 's'} so far`}>
+          <span className="text-[10px] text-warn tabular cursor-default">×{t.attempts}</span>
+        </Tip>
+      )}
+      <Badge variant={t.state === 'waiting_session' ? 'violet' : 'default'}>{titleCase(t.state)}</Badge>
+      {t.state === 'pending' && (
+        <Tip label="Cancel">
+          <button className="text-ink-3 hover:text-critical cursor-pointer" onClick={() => void api.cancelTask(t.id)}>
+            <XCircle className="h-3.5 w-3.5" />
+          </button>
+        </Tip>
+      )}
+    </div>
+  );
+}
+
 function QueuePanel() {
   const tasks = useStore((s) => s.tasks);
   const budgets = useStore((s) => s.budgets);
@@ -311,18 +398,25 @@ function QueuePanel() {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
   const pushToast = useStore((s) => s.pushToast);
+  const jobs = useStore((s) => s.jobs);
+  const applications = useStore((s) => s.applications);
   const [rate, setRate] = useState<number | null>(null);
   const [runBusy, setRunBusy] = useState(false);
   const [regenBusy, setRegenBusy] = useState(false);
+  const [retryBusy, setRetryBusy] = useState(false);
   const interval = rate ?? settings?.discoveryIntervalMinutes ?? 360;
 
-  const running = tasks.find((t) => t.state === 'running' && t.type === 'discover');
-  const discoverActive = tasks.some((t) => t.type === 'discover' && (t.state === 'pending' || t.state === 'running'));
+  const runningDiscover = tasks.find((t) => t.state === 'running' && t.type === 'discover');
+  // The button's "Discovering…" state mirrors the actual discover task: a
+  // queued-but-paused task must not wedge it (pause blocks all claiming).
+  const discoverActive =
+    tasks.some((t) => t.type === 'discover' && t.state === 'running') ||
+    (!paused && tasks.some((t) => t.type === 'discover' && t.state === 'pending'));
+
+  const running = tasks.filter((t) => t.state === 'running');
   const needsHuman = tasks.filter((t) => t.state === 'needs_human');
+  const pendingTasks = tasks.filter((t) => ['pending', 'paused', 'waiting_session'].includes(t.state));
   const failed = tasks.filter((t) => t.state === 'failed' && t.lastError !== 'Cancelled by user');
-  const active = tasks
-    .filter((t) => ['pending', 'running', 'paused', 'waiting_session'].includes(t.state))
-    .slice(0, 6);
 
   const rateLabel = interval < 60 ? `${interval} min` : interval < 1440 ? `${Math.round(interval / 60)} h` : 'daily';
 
@@ -333,8 +427,8 @@ function QueuePanel() {
         hint={
           paused
             ? 'Paused — cursors saved, nothing will run'
-            : running
-              ? `Working ${sourceLabel(String((running.cursor as { source?: string } | null)?.source ?? '…'))} · page ${(running.cursor as { page?: number } | null)?.page ?? '–'}`
+            : runningDiscover
+              ? `Working ${sourceLabel(String((runningDiscover.cursor as { source?: string } | null)?.source ?? '…'))} · page ${(runningDiscover.cursor as { page?: number } | null)?.page ?? '–'}`
               : 'Idle — next run on schedule'
         }
         right={
@@ -367,52 +461,97 @@ function QueuePanel() {
         }
       />
       <div className="px-4 pb-4 space-y-4">
-        {/* needs-human alerts */}
-        <AnimatePresence>
-          {needsHuman.map((t) => (
-            <motion.div
-              key={t.id}
-              initial={{ opacity: 0, scale: 0.97 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, height: 0 }}
-              className="rounded-lg border border-warn-raw/45 bg-warn-raw/10 p-3"
-            >
-              <div className="flex items-start gap-2.5">
-                <HandHelping className="h-4.5 w-4.5 text-warn shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-ink">
-                    Your turn: {titleCase(t.type)} task #{t.id}
-                  </p>
-                  <p className="text-xs text-ink-2 mt-0.5 leading-relaxed">{t.humanPrompt}</p>
-                  <div className="mt-2 flex gap-2">
-                    <Button size="sm" onClick={() => void api.resolveHuman(t.id)}>
-                      I did it — resume
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => void api.cancelTask(t.id)}>
-                      Cancel task
-                    </Button>
+        {/* grouped task list — scrollable, load-more per group */}
+        {(running.length > 0 || needsHuman.length > 0 || pendingTasks.length > 0 || failed.length > 0) && (
+          <div className="max-h-[400px] overflow-y-auto space-y-3 pr-1">
+            <TaskGroup
+              label="Running"
+              tone="var(--good)"
+              tasks={running}
+              renderRow={(t) => <PlainTaskRow key={t.id} t={t} />}
+            />
+            <TaskGroup
+              label="Needs attention"
+              tone="var(--warn-raw)"
+              tasks={needsHuman}
+              renderRow={(t) => (
+                <motion.div
+                  key={t.id}
+                  initial={{ opacity: 0, scale: 0.97 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="rounded-lg border border-warn-raw/45 bg-warn-raw/10 p-3"
+                >
+                  <div className="flex items-start gap-2.5">
+                    <HandHelping className="h-4.5 w-4.5 text-warn shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-ink">
+                        Your turn: {humanizeTask(t, jobs, applications)}
+                      </p>
+                      <p className="text-xs text-ink-2 mt-0.5 leading-relaxed">{t.humanPrompt}</p>
+                      <div className="mt-2 flex gap-2">
+                        <Button size="sm" onClick={() => void api.resolveHuman(t.id)}>
+                          I did it — resume
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => void api.cancelTask(t.id)}>
+                          Cancel task
+                        </Button>
+                      </div>
+                    </div>
                   </div>
+                </motion.div>
+              )}
+            />
+            <TaskGroup
+              label="Pending"
+              tone="var(--ink-3)"
+              tasks={pendingTasks}
+              renderRow={(t) => <PlainTaskRow key={t.id} t={t} />}
+            />
+            <TaskGroup
+              label="Failed"
+              tone="var(--critical)"
+              tasks={failed}
+              defaultOpen={failed.length <= 5}
+              right={
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={retryBusy}
+                  onClick={async () => {
+                    setRetryBusy(true);
+                    try {
+                      const { requeued } = await api.retryFailed();
+                      pushToast('success', `${requeued} failed task${requeued === 1 ? '' : 's'} requeued`);
+                    } catch (err) {
+                      pushToast('error', `Retry failed: ${err instanceof Error ? err.message : 'unknown error'}`);
+                    } finally {
+                      setRetryBusy(false);
+                    }
+                  }}
+                >
+                  {retryBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                  Retry all failed
+                </Button>
+              }
+              renderRow={(t) => (
+                <div key={t.id} className="rounded-lg border border-critical/35 bg-critical/8 p-3 flex items-start gap-2.5">
+                  <AlertTriangle className="h-4 w-4 text-critical shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-ink">
+                      {humanizeTask(t, jobs, applications)} — failed ({t.attempts} attempts)
+                    </p>
+                    <p className="text-[11px] text-ink-3 mt-0.5 leading-relaxed break-words">{t.lastError}</p>
+                  </div>
+                  <Tip label="Retry now">
+                    <Button size="icon-sm" variant="ghost" onClick={() => void api.retryTask(t.id)}>
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    </Button>
+                  </Tip>
                 </div>
-              </div>
-            </motion.div>
-          ))}
-        </AnimatePresence>
-
-        {/* failed */}
-        {failed.map((t) => (
-          <div key={t.id} className="rounded-lg border border-critical/35 bg-critical/8 p-3 flex items-start gap-2.5">
-            <AlertTriangle className="h-4 w-4 text-critical shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-ink">{titleCase(t.type)} failed ({t.attempts} attempts)</p>
-              <p className="text-[11px] text-ink-3 mt-0.5 leading-relaxed">{t.lastError}</p>
-            </div>
-            <Tip label="Retry now">
-              <Button size="icon-sm" variant="ghost" onClick={() => void api.retryTask(t.id)}>
-                <RotateCcw className="h-3.5 w-3.5" />
-              </Button>
-            </Tip>
+              )}
+            />
           </div>
-        ))}
+        )}
 
         {/* rate slider */}
         <div>
@@ -436,38 +575,6 @@ function QueuePanel() {
             }}
           />
         </div>
-
-        {/* active tasks */}
-        {active.length > 0 && (
-          <div className="space-y-1">
-            {active.map((t) => (
-              <div key={t.id} className="flex items-center gap-2 text-xs rounded-md px-2 py-1.5 bg-overlay/50 border border-line/60">
-                <span
-                  className={`h-1.5 w-1.5 rounded-full shrink-0 ${t.state === 'running' ? 'status-pulse' : ''}`}
-                  style={{
-                    background:
-                      t.state === 'running' ? 'var(--good)'
-                        : t.state === 'waiting_session' ? 'var(--series-7)'
-                          : t.state === 'paused' ? 'var(--warn-raw)' : 'var(--ink-3)',
-                    ['--pulse-color' as string]: 'var(--good)',
-                  }}
-                />
-                <span className="font-medium text-ink-2">{titleCase(t.type)}</span>
-                <span className="text-ink-3 truncate flex-1">
-                  {(t.payload as { company?: string }).company ?? (t.cursor as { source?: string } | null)?.source ?? ''}
-                </span>
-                <Badge variant={t.state === 'waiting_session' ? 'violet' : 'default'}>{titleCase(t.state)}</Badge>
-                {t.state === 'pending' && (
-                  <Tip label="Cancel">
-                    <button className="text-ink-3 hover:text-critical cursor-pointer" onClick={() => void api.cancelTask(t.id)}>
-                      <XCircle className="h-3.5 w-3.5" />
-                    </button>
-                  </Tip>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
 
         {/* budgets */}
         <div>

@@ -193,9 +193,46 @@ export function jobRoutes(ctx: AppContext): Router {
 
   router.post('/jobs/:id/skip', (req, res) => {
     const id = idParam(req);
-    const row = ctx.db.update(jobs).set({ status: 'skipped' }).where(eq(jobs.id, id)).returning().get();
-    if (!row) throw new ApiError(404, 'not_found', `No job ${id}`);
+    const existing = ctx.db.select().from(jobs).where(eq(jobs.id, id)).get();
+    if (!existing) throw new ApiError(404, 'not_found', `No job ${id}`);
+    // Scam-verdict jobs stay quarantined (findable for manual review) — never
+    // silently buried in 'skipped'.
+    const status = existing.legitVerdict === 'scam' ? 'quarantined' : 'skipped';
+    const row = ctx.db.update(jobs).set({ status }).where(eq(jobs.id, id)).returning().get();
     res.json(toJob(row));
+  });
+
+  // Manual legitimacy override: the user reviewed a suspicious/scam job and
+  // vouches for it. Verdict → legit (note appended to the reasons trail),
+  // status back to 'screened', and a rescore is queued when it never got a fit
+  // score (quarantine used to preempt scoring).
+  router.post('/jobs/:id/override-legit', (req, res) => {
+    const id = idParam(req);
+    const body = parseBody(
+      z.object({ verdict: z.literal('legit'), note: z.string().min(1).max(500) }),
+      req,
+    );
+    const existing = ctx.db.select().from(jobs).where(eq(jobs.id, id)).get();
+    if (!existing) throw new ApiError(404, 'not_found', `No job ${id}`);
+    let reasons: string[] = [];
+    try {
+      reasons = existing.legitReasonsJson ? (JSON.parse(existing.legitReasonsJson) as string[]) : [];
+    } catch {
+      reasons = [];
+    }
+    reasons.push(`[user override: ${body.note}]`);
+    const row = ctx.db
+      .update(jobs)
+      .set({ legitVerdict: body.verdict, legitReasonsJson: JSON.stringify(reasons), status: 'screened' })
+      .where(eq(jobs.id, id))
+      .returning()
+      .get();
+    let taskId: number | null = null;
+    if (row.fitScore == null) {
+      taskId = ctx.queue.enqueue('score', { payload: { jobId: id, rescore: true } }).id;
+    }
+    ctx.bus.emit({ type: 'job.scored', job: toJob(row) });
+    res.json({ job: toJob(row), taskId });
   });
 
   // Dashboard-requested: pre-application status transitions only. Application

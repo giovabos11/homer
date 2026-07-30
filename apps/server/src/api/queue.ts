@@ -2,18 +2,29 @@
 import crypto from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
-import type { QueueTask, SourceBudget } from '@shared/types';
+import type { QueueTask, ScheduleNextRuns, SourceBudget, TaskType } from '@shared/types';
 import { toQueueTask, toSourceBudget } from '../db/serialize';
 import type { AppContext } from '../context';
 import { ApiError, idParam, parseBody } from './util';
 
-export function queueSnapshot(ctx: AppContext): { tasks: QueueTask[]; budgets: SourceBudget[]; paused: boolean } {
+export function queueSnapshot(ctx: AppContext): {
+  tasks: QueueTask[];
+  budgets: SourceBudget[];
+  paused: boolean;
+  nextRuns: ScheduleNextRuns;
+} {
   return {
     tasks: ctx.queue.list().map(toQueueTask),
     budgets: ctx.budgets.list().map(toSourceBudget),
     paused: ctx.queue.isPaused(),
+    nextRuns: ctx.scheduler.nextRuns(),
   };
 }
+
+const TASK_TYPES = [
+  'discover', 'score', 'tailor', 'apply', 'email_scan', 'email_send', 'followup',
+  'prep_guide', 'profile_sync', 'ask', 'feedback', 'setup', 'regen_queries',
+] as const satisfies readonly TaskType[];
 
 export function queueRoutes(ctx: AppContext): Router {
   const router = Router();
@@ -78,6 +89,16 @@ export function queueRoutes(ctx: AppContext): Router {
     const settings = ctx.settings.patch({ discoveryIntervalMinutes: body.discoveryIntervalMinutes });
     ctx.scheduler.reschedule();
     res.json(settings);
+  });
+
+  // Bulk retry: every failed task (optionally one type) back to pending with
+  // attempts reset. Explicit user cancellations stay cancelled.
+  router.post('/queue/retry-failed', (req, res) => {
+    const body = parseBody(z.object({ type: z.enum(TASK_TYPES).optional() }), req);
+    const rows = ctx.queue.retryAllFailed(body.type);
+    const snapshot = queueSnapshot(ctx);
+    ctx.bus.emit({ type: 'queue.snapshot', ...snapshot });
+    res.json({ requeued: rows.length });
   });
 
   router.post('/queue/tasks/:id/resolve-human', (req, res) => {

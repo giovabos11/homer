@@ -151,6 +151,46 @@ export class TaskQueue {
     return this.setState(id, 'failed', { lastError: 'Cancelled by user' });
   }
 
+  /**
+   * Requeue zombie claims: 'running' rows whose updated_at is older than
+   * `olderThanMs` (dev-server restarts kill workers mid-task and the claim
+   * never expires on its own). Attempts are preserved; lastError notes the
+   * reclaim. Pass 0 at boot — before the runner starts, nothing can
+   * legitimately be running.
+   */
+  reclaimStale(olderThanMs: number): TaskRow[] {
+    const now = this.nowIso();
+    const cutoff = new Date(this.clock() - olderThanMs).toISOString();
+    const rows = this.sqlite
+      .prepare(
+        `UPDATE task_queue
+         SET state='pending', run_after=NULL, last_error='reclaimed after stale run', updated_at=@now
+         WHERE state='running' AND updated_at <= @cutoff
+         RETURNING id`,
+      )
+      .all({ now, cutoff }) as { id: number }[];
+    return rows.map((r) => this.get(r.id)).filter((r): r is TaskRow => r != null);
+  }
+
+  /**
+   * Bulk retry of failed tasks (optionally one type): attempts reset to 0,
+   * back to pending immediately. Explicit user cancellations stay cancelled.
+   */
+  retryAllFailed(type?: TaskType): TaskRow[] {
+    const now = this.nowIso();
+    const rows = this.sqlite
+      .prepare(
+        `UPDATE task_queue
+         SET state='pending', attempts=0, last_error=NULL, run_after=NULL, updated_at=@now
+         WHERE state='failed'
+           AND (last_error IS NULL OR last_error <> 'Cancelled by user')
+           ${type ? 'AND type=@type' : ''}
+         RETURNING id`,
+      )
+      .all(type ? { now, type } : { now }) as { id: number }[];
+    return rows.map((r) => this.get(r.id)).filter((r): r is TaskRow => r != null);
+  }
+
   // --- global pause flag (persisted so it survives restarts) ---
 
   isPaused(): boolean {

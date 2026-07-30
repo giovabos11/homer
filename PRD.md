@@ -324,3 +324,21 @@ Files remain first-class (upstream compatibility): `documents/applications/<comp
 - [ ] Approve the Playwright MCP install prompt.
 - [ ] (Optional) Paste free Adzuna / USAJobs keys into Connections.
 - [ ] Keep a Claude session open (or scheduled) for Gmail-dependent tasks; solve captchas when prompted.
+
+---
+
+## 11. Addendum — dashboard-first requirements (2026-07-30)
+
+Requirements added after live use; all are implemented and covered by `apps/CONTRACT.md`.
+
+- **Dashboard-run profile setup chat** — `/setup` semantics run inside the dashboard (`POST /api/setup/start|message`, `setup.delta` SSE): documents-scan path or conversational interview; the agent may only edit `CLAUDE.md` + the job-application-assistant skill files; `profileReady` drives first-run onboarding.
+- **Bottom-nav profile modal** — sidebar profile chip opens a modal with editable profile files (strict safe-list: `documents/**`, skill files, `CLAUDE.md`) and contact overrides (`PATCH /api/profile`) that win over file-extracted values.
+- **Per-task model config** — settings keys `modelAsk` (haiku), `modelSetup`/`modelScraper`/`modelPipeline` (sonnet); `default` (the user's own Claude Code model) is selectable but is never any task's default — the top model is never burned by default.
+- **Pipeline auto-advance with threshold** — `autoAdvance: off | threshold | all` (default threshold, `autoAdvanceThreshold` 70): screened jobs that are legit, not location-vetoed, and meet the gate flow into tailoring automatically; submission still obeys the submit gate.
+- **Discovery description-enrichment** — fetch-before-score: portal `detail` command first, agent (haiku + WebFetch, untrusted data) fallback, on-demand backfill endpoint; jobs scored without a description are capped and annotated, never hallucinated.
+- **Server-side pagination** — jobs/applications/emails list endpoints take `limit/offset` and return `{ total, … }`; the applications table pages server-side.
+- **Guided Gmail/Chrome connect + probe** — Connections cards walk through claude.ai Gmail MCP and Chrome; `POST /api/connections/gmail/probe` runs a tiny headless agent check and reports tool reachability.
+- **Current-task strip** — slim live bar on Mission Control above the stat tiles: animated activity dot, humanized running task ("Scoring — Backend Engineer @ Parallel Works"), pause/play toggle, idle state with next discovery time, needs-attention/failed badge counts; clicking opens a live task-detail modal (running + recent, counts, bulk retry, link to the Search queue panel). SSE-driven.
+- **Legitimacy manual review/override + structural-signals cap** — structural scam heuristics alone cap at `suspicious`; a `scam` verdict (quarantine) requires the agent's web verification to concur. Benign HR phrases ("background checks", "reference checks", "direct deposit") are scrubbed before keyword matching and the check-cashing pattern requires employer-task phrasing. Quarantined jobs keep `status='quarantined'` (findable via the table filter); the JobDrawer shows the flag reasons prominently with "Mark as legit & rescore" (`POST /api/jobs/:id/override-legit` — note recorded in the reasons trail, rescore queued when unscored) and "Keep quarantined".
+- **Queue UX** — the queue panel task list is a max-height scrollable area grouped into Running / Needs attention / Pending / Failed (collapsible, load-more past 20 per group); "Retry all failed" calls `POST /api/queue/retry-failed` (attempts reset, cancellations excluded); the "Run discovery now" button derives its loading state from the actual discover task and can no longer wedge while paused.
+- **Zombie-task recovery** — on boot every `running` claim is requeued (`attempts` preserved, `lastError='reclaimed after stale run'`); a periodic sweep requeues `running` tasks stale for 10+ minutes; jobs stuck in `tailoring` with no live tailor task revert to `screened` with a toast. Agent replies are parsed with layered JSON extraction (bare → fenced → balanced-object) plus one corrective "JSON only" retry, and the raw reply is preserved in `lastError` on final failure.

@@ -3,6 +3,7 @@
 import { createApp } from './app';
 import { createContext } from './context';
 import { QueueRunner } from './queue/runner';
+import { runStartupRecovery, startZombieSweep } from './queue/recovery';
 import { startDocumentsWatcher, type DocumentsWatcher } from './docs/watcher';
 
 function main(): void {
@@ -10,19 +11,23 @@ function main(): void {
   const app = createApp(ctx);
   const runner = new QueueRunner(ctx);
   let watcher: DocumentsWatcher | null = null;
+  let stopSweep: (() => void) | null = null;
 
   const server = app.listen(ctx.config.port, ctx.config.host, () => {
     console.log(`[server] ai-job-search server v${ctx.version} listening on http://${ctx.config.host}:${ctx.config.port}`);
     console.log(`[server] data dir: ${ctx.dataDir}`);
     console.log(`[server] vault backend: ${ctx.vault.backend}${ctx.simulate ? ' · SIMULATE mode ON' : ''}`);
+    runStartupRecovery(ctx); // reclaim zombie claims / stuck jobs BEFORE claiming starts
     ctx.scheduler.start();
     runner.start();
+    stopSweep = startZombieSweep(ctx);
     watcher = startDocumentsWatcher(ctx); // FR-14: documents/ edits queue a profile re-merge
   });
 
   const shutdown = (signal: string) => {
     console.log(`[server] ${signal} — shutting down`);
     runner.stop();
+    stopSweep?.();
     void watcher?.stop().catch(() => undefined);
     ctx.scheduler.stop();
     server.close(() => {

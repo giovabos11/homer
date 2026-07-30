@@ -11,15 +11,25 @@ type JobRow = typeof jobs.$inferSelect;
 export interface StructuralSignal {
   code: string;
   reason: string;
-  /** true → alone enough for a scam verdict; false → suspicious. */
+  /** Classic-scam keyword class (metadata only — structural signals alone never exceed 'suspicious'). */
   hard: boolean;
 }
 
-/** Keywords that mark classic job-scam language. Hard signals quarantine. */
+/**
+ * Benign HR phrases that must never trip the scam keyword patterns
+ * ("background checks", "reference checks", "direct deposit" are normal
+ * benefits/process language — a Duolingo posting was quarantined because its
+ * own anti-fraud disclaimer said "we'll never ask you to deposit a check").
+ */
+const BENIGN_PHRASES_RE = /\b(?:background|reference|credit)\s+checks?\b|\bdirect\s+deposit\b/gi;
+
+/** Keywords that mark classic job-scam language. */
 const HARD_KEYWORD_PATTERNS: { re: RegExp; code: string; reason: string }[] = [
   { re: /pay[\s-]*to[\s-]*apply|application\s+fee|registration\s+fee|training\s+fee|pay\s+for\s+(your\s+)?training/i, code: 'pay_to_apply', reason: 'Posting asks the applicant to pay a fee (pay-to-apply language)' },
   { re: /wire\s+transfer|western\s+union|moneygram/i, code: 'wire_transfer', reason: 'Posting mentions wire transfers (classic advance-fee scam signal)' },
-  { re: /cash(ing)?\s+(a\s+)?checks?|deposit\s+(a\s+|the\s+)?check|money\s+order/i, code: 'check_cashing', reason: 'Posting involves cashing or depositing checks for the employer' },
+  // Employer-task phrasing only: "cash/deposit checks … for/on behalf of …".
+  // Bare mentions ("we'll never ask you to deposit a check") no longer match.
+  { re: /\b(?:cash|deposit)(?:ing)?\s+(?:a\s+|the\s+)?(?:checks?|money\s+orders?)\b[\s\S]{0,40}?\b(?:for|on\s+behalf\s+of)\b/i, code: 'check_cashing', reason: 'Posting asks the applicant to cash or deposit checks for the employer' },
 ];
 
 const SOFT_KEYWORD_PATTERNS: { re: RegExp; code: string; reason: string }[] = [
@@ -37,12 +47,14 @@ export function descriptionFingerprint(descriptionMd: string): string {
 }
 
 export function keywordSignals(descriptionMd: string): StructuralSignal[] {
+  // Scrub benign HR phrasing first so scam patterns can never match inside it.
+  const text = descriptionMd.replace(BENIGN_PHRASES_RE, ' ');
   const out: StructuralSignal[] = [];
   for (const p of HARD_KEYWORD_PATTERNS) {
-    if (p.re.test(descriptionMd)) out.push({ code: p.code, reason: p.reason, hard: true });
+    if (p.re.test(text)) out.push({ code: p.code, reason: p.reason, hard: true });
   }
   for (const p of SOFT_KEYWORD_PATTERNS) {
-    if (p.re.test(descriptionMd)) out.push({ code: p.code, reason: p.reason, hard: false });
+    if (p.re.test(text)) out.push({ code: p.code, reason: p.reason, hard: false });
   }
   return out;
 }
@@ -118,10 +130,14 @@ export function structuralSignals(db: Db, job: JobRow): StructuralSignal[] {
 
 const VERDICT_RANK: Record<LegitVerdict, number> = { unchecked: 0, legit: 1, suspicious: 2, scam: 3 };
 
+/**
+ * Structural signals alone cap at 'suspicious' — a 'scam' verdict requires the
+ * agent's web verification to concur (the worst-verdict merge upgrades it when
+ * the agent also says scam). Keyword heuristics quarantining real postings on
+ * their own proved too false-positive-prone.
+ */
 export function verdictFromSignals(signals: StructuralSignal[]): LegitVerdict {
-  if (signals.some((s) => s.hard)) return 'scam';
-  if (signals.length > 0) return 'suspicious';
-  return 'legit';
+  return signals.length > 0 ? 'suspicious' : 'legit';
 }
 
 /** Worst verdict wins when merging structural + agent verdicts. */

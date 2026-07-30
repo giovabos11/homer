@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type {
   Application, Connection, EmailRecord, FeedbackEntry, Job, PrepTask, QueueTask,
-  ScheduleEvent, Settings, SkillProgress, SourceBudget, SseEvent, UserProfile,
+  ScheduleEvent, ScheduleNextRuns, Settings, SkillProgress, SourceBudget, SseEvent, UserProfile,
 } from '@shared';
 import { api } from '@/api/client';
 
@@ -51,6 +51,7 @@ interface StoreState {
   tasks: QueueTask[];
   budgets: SourceBudget[];
   queuePaused: boolean;
+  nextRuns: ScheduleNextRuns | null;
   emails: EmailRecord[];
   emailsTotal: number;
   emailsLoadingMore: boolean;
@@ -102,6 +103,7 @@ export const useStore = create<StoreState>((set, get) => ({
   tasks: [],
   budgets: [],
   queuePaused: false,
+  nextRuns: null,
   emails: [],
   emailsTotal: 0,
   emailsLoadingMore: false,
@@ -141,6 +143,7 @@ export const useStore = create<StoreState>((set, get) => ({
         tasks: queue.tasks,
         budgets: queue.budgets,
         queuePaused: queue.paused,
+        nextRuns: queue.nextRuns ?? null,
         emails: emailsRes.emails,
         emailsTotal: emailsRes.total,
         schedule,
@@ -191,7 +194,7 @@ export const useStore = create<StoreState>((set, get) => ({
   },
   async refreshQueue() {
     const q = await api.getQueue();
-    set({ tasks: q.tasks, budgets: q.budgets, queuePaused: q.paused });
+    set({ tasks: q.tasks, budgets: q.budgets, queuePaused: q.paused, nextRuns: q.nextRuns ?? null });
   },
 
   setSseConnected(v) {
@@ -228,7 +231,7 @@ export const useStore = create<StoreState>((set, get) => ({
         set({ tasks: upsert(st.tasks, e.task, (t) => t.id, true) });
         break;
       case 'queue.snapshot':
-        set({ tasks: e.tasks, budgets: e.budgets, queuePaused: e.paused });
+        set({ tasks: e.tasks, budgets: e.budgets, queuePaused: e.paused, nextRuns: e.nextRuns ?? st.nextRuns });
         break;
       case 'task.needs_human':
         set({ tasks: upsert(st.tasks, e.task, (t) => t.id, true) });

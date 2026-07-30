@@ -21,6 +21,7 @@
 import path from 'node:path';
 import { z } from 'zod';
 import { fenceUntrusted, readProfileSources, stripDashes, strictJsonFooter } from '../agent/prompts';
+import { runStructured } from '../agent/structured';
 import { decideGate } from '../pipeline/gate';
 import { readProfile } from '../api/core';
 import {
@@ -130,17 +131,19 @@ function applyNoDashRule(draft: TailorDraft): TailorDraft {
 }
 
 async function draftWithReview(ctx: AppContext, job: JobRow, appId: number): Promise<{ draft: TailorDraft; critique: string }> {
-  const drafted = await ctx.runner.run({
-    prompt: buildDrafterPrompt(ctx, job),
-    cwd: ctx.repoRoot,
-    model: ctx.settings.get().modelPipeline,
-    timeoutMs: ctx.config.agent.defaultTimeoutMs,
-  });
-  const parsed = tailorDraftSchema.safeParse(drafted.structured);
-  if (!parsed.success) {
-    throw new Error(`Drafter returned unparseable content: ${parsed.error.issues[0]?.message ?? 'no JSON'}`);
-  }
-  let draft = parsed.data;
+  // runStructured = layered JSON extraction + one corrective retry + raw
+  // output preserved in the error (→ task lastError) on final failure.
+  let draft = await runStructured(
+    ctx.runner,
+    {
+      prompt: buildDrafterPrompt(ctx, job),
+      cwd: ctx.repoRoot,
+      model: ctx.settings.get().modelPipeline,
+      timeoutMs: ctx.config.agent.defaultTimeoutMs,
+    },
+    tailorDraftSchema,
+    'Drafter',
+  );
 
   // Reviewer critique pass. A malformed reviewer reply keeps the drafter output.
   let critique = '';

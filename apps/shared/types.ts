@@ -186,13 +186,20 @@ export interface Settings {
   autoAdvanceThreshold: number;               // fit score gate for 'threshold' mode (default 70)
 }
 
+/** Next scheduled sweep times (ISO) — part of the queue snapshot. */
+export interface ScheduleNextRuns {
+  discover: string | null;
+  emailScan: string | null;
+  followup: string | null;
+}
+
 // ---- SSE events (GET /api/events, text/event-stream) ----
 export type SseEvent =
   | { type: 'job.discovered'; job: Job }
   | { type: 'job.scored'; job: Job }
   | { type: 'application.updated'; application: Application }
   | { type: 'queue.updated'; task: QueueTask }
-  | { type: 'queue.snapshot'; tasks: QueueTask[]; budgets: SourceBudget[]; paused: boolean }
+  | { type: 'queue.snapshot'; tasks: QueueTask[]; budgets: SourceBudget[]; paused: boolean; nextRuns?: ScheduleNextRuns }
   | { type: 'task.needs_human'; task: QueueTask }
   | { type: 'email.received'; email: EmailRecord }
   | { type: 'outbox.updated'; email: EmailRecord }

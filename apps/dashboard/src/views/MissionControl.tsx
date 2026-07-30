@@ -1,12 +1,183 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { Award, CalendarClock, Flame, MailCheck, Rocket, Send, Trophy } from 'lucide-react';
+import {
+  ArrowRight, Award, CalendarClock, Flame, Loader2, MailCheck, Pause, Play, Rocket,
+  RotateCcw, Send, Trophy,
+} from 'lucide-react';
+import type { QueueTask } from '@shared';
+import { api } from '@/api/client';
 import { useStore } from '@/store/useStore';
 import { computeStreak, computeXp } from '@/lib/xp';
+import { humanizeTask } from '@/lib/tasks';
+import { fmtRelative, fmtTime, titleCase } from '@/lib/format';
 import { PageHeader, StatTile } from '@/components/common/layout';
 import { OnboardingCard } from '@/components/common/OnboardingCard';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Tip } from '@/components/ui/controls';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { KanbanBoard } from '@/components/kanban/KanbanBoard';
+
+/* --------------------------- Current-task strip --------------------------- */
+function TaskDetailRow({ t }: { t: QueueTask }) {
+  const jobs = useStore((s) => s.jobs);
+  const applications = useStore((s) => s.applications);
+  const stateTone =
+    t.state === 'running' ? 'var(--good)'
+      : t.state === 'needs_human' ? 'var(--warn-raw)'
+        : t.state === 'failed' ? 'var(--critical)'
+          : t.state === 'done' ? 'var(--accent)' : 'var(--ink-3)';
+  return (
+    <div className="flex items-center gap-2 text-xs rounded-md px-2 py-1.5 bg-overlay/50 border border-line/60">
+      <span
+        className={`h-1.5 w-1.5 rounded-full shrink-0 ${t.state === 'running' ? 'status-pulse' : ''}`}
+        style={{ background: stateTone, ['--pulse-color' as string]: stateTone }}
+      />
+      <span className="text-ink-2 truncate flex-1">{humanizeTask(t, jobs, applications)}</span>
+      <span className="text-[10px] text-ink-3 tabular shrink-0">{fmtRelative(t.updatedAt)}</span>
+      <Badge variant={t.state === 'failed' ? 'critical' : t.state === 'needs_human' ? 'warn' : 'default'}>
+        {titleCase(t.state)}
+      </Badge>
+    </div>
+  );
+}
+
+/**
+ * Slim live-activity bar: what the pipeline is doing right now, pause/play,
+ * and the needs-attention/failed counts. Click for the full task detail.
+ */
+function CurrentTaskStrip() {
+  const tasks = useStore((s) => s.tasks);
+  const jobs = useStore((s) => s.jobs);
+  const applications = useStore((s) => s.applications);
+  const paused = useStore((s) => s.queuePaused);
+  const nextRuns = useStore((s) => s.nextRuns);
+  const pushToast = useStore((s) => s.pushToast);
+  const [open, setOpen] = useState(false);
+  const [toggleBusy, setToggleBusy] = useState(false);
+  const [retryBusy, setRetryBusy] = useState(false);
+
+  const running = tasks.filter((t) => t.state === 'running');
+  const needsHuman = tasks.filter((t) => t.state === 'needs_human').length;
+  const failed = tasks.filter((t) => t.state === 'failed' && t.lastError !== 'Cancelled by user');
+  const pending = tasks.filter((t) => t.state === 'pending').length;
+  const current = running[0];
+  const recent = [...tasks]
+    .filter((t) => t.state !== 'running')
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, 8);
+
+  const label = paused
+    ? 'Queue paused — nothing will run'
+    : current
+      ? humanizeTask(current, jobs, applications)
+      : `Queue idle${nextRuns?.discover ? ` — next discovery at ${fmtTime(nextRuns.discover)}` : ''}`;
+  const dotColor = paused ? 'var(--warn-raw)' : current ? 'var(--good)' : 'var(--line-strong)';
+
+  const togglePause = async () => {
+    setToggleBusy(true);
+    try {
+      if (paused) await api.resumeQueue();
+      else await api.pauseQueue();
+    } finally {
+      setToggleBusy(false);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+      className="rounded-xl border border-line bg-surface pl-3.5 pr-2 py-1.5 flex items-center gap-2"
+    >
+      <button
+        onClick={() => setOpen(true)}
+        className="flex items-center gap-2.5 flex-1 min-w-0 text-left cursor-pointer group py-0.5"
+        aria-label="Open queue activity"
+      >
+        <span
+          className={`h-2 w-2 rounded-full shrink-0 ${current && !paused ? 'status-pulse' : ''}`}
+          style={{ background: dotColor, ['--pulse-color' as string]: dotColor }}
+        />
+        <span className="text-[13px] font-medium text-ink truncate group-hover:text-accent transition-colors">
+          {label}
+        </span>
+        {running.length > 1 && (
+          <span className="text-[11px] text-ink-3 shrink-0">+{running.length - 1} more running</span>
+        )}
+      </button>
+      {needsHuman > 0 && <Badge variant="warn">{needsHuman} need{needsHuman === 1 ? 's' : ''} you</Badge>}
+      {failed.length > 0 && <Badge variant="critical">{failed.length} failed</Badge>}
+      {pending > 0 && <Badge>{pending} queued</Badge>}
+      <Tip label={paused ? 'Resume the queue' : 'Pause the queue'}>
+        <Button size="icon-sm" variant="ghost" disabled={toggleBusy} onClick={() => void togglePause()} aria-label={paused ? 'Resume queue' : 'Pause queue'}>
+          {toggleBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : paused ? <Play className="h-4 w-4 text-good" /> : <Pause className="h-4 w-4" />}
+        </Button>
+      </Tip>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogTitle>Queue activity</DialogTitle>
+          <DialogDescription>
+            {running.length} running · {pending} pending · {needsHuman} need attention · {failed.length} failed
+          </DialogDescription>
+          <div className="mt-3 space-y-4">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-2 mb-1.5">Running now</p>
+              {running.length > 0 ? (
+                <div className="space-y-1">{running.slice(0, 8).map((t) => <TaskDetailRow key={t.id} t={t} />)}</div>
+              ) : (
+                <p className="text-xs text-ink-3">
+                  Nothing running{paused ? ' — the queue is paused' : nextRuns?.discover ? ` — next discovery at ${fmtTime(nextRuns.discover)}` : ''}.
+                </p>
+              )}
+            </div>
+            {recent.length > 0 && (
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-2 mb-1.5">Recent</p>
+                <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
+                  {recent.map((t) => <TaskDetailRow key={t.id} t={t} />)}
+                </div>
+              </div>
+            )}
+            <div className="flex items-center gap-2 pt-1">
+              {failed.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={retryBusy}
+                  onClick={async () => {
+                    setRetryBusy(true);
+                    try {
+                      const { requeued } = await api.retryFailed();
+                      pushToast('success', `${requeued} failed task${requeued === 1 ? '' : 's'} requeued`);
+                    } catch (err) {
+                      pushToast('error', `Retry failed: ${err instanceof Error ? err.message : 'unknown error'}`);
+                    } finally {
+                      setRetryBusy(false);
+                    }
+                  }}
+                >
+                  {retryBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                  Retry all failed
+                </Button>
+              )}
+              <Link
+                to="/search"
+                onClick={() => setOpen(false)}
+                className="ml-auto text-xs text-accent hover:underline inline-flex items-center gap-1"
+              >
+                Open queue panel <ArrowRight className="h-3 w-3" />
+              </Link>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </motion.div>
+  );
+}
 
 function XpHeader() {
   const applications = useStore((s) => s.applications);
@@ -105,6 +276,7 @@ export default function MissionControl() {
         subtitle="Your entire pipeline, live — drag cards to move them through the funnel"
       />
       <OnboardingCard />
+      <CurrentTaskStrip />
       <XpHeader />
       <div className="flex-1 min-h-0">
         {ready && jobs.length === 0 ? (
