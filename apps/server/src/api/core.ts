@@ -75,6 +75,26 @@ export function coreRoutes(ctx: AppContext): Router {
   return router;
 }
 
+/** Files that ship as placeholders; "[PLACEHOLDER" / "[YOUR_" tokens mean /setup has not run yet. */
+const PROFILE_READY_FILES = ['CLAUDE.md', '.claude/skills/job-application-assistant/01-candidate-profile.md'];
+
+/**
+ * True once the candidate profile is populated: every profile file that exists
+ * is free of the literal placeholder tokens "[PLACEHOLDER" and "[YOUR_"
+ * (and at least one of the files exists at all).
+ */
+export function computeProfileReady(repoRoot: string): boolean {
+  let sawAny = false;
+  for (const rel of PROFILE_READY_FILES) {
+    const abs = path.join(repoRoot, rel);
+    if (!fs.existsSync(abs)) continue;
+    sawAny = true;
+    const text = fs.readFileSync(abs, 'utf8');
+    if (text.includes('[PLACEHOLDER') || text.includes('[YOUR_')) return false;
+  }
+  return sawAny;
+}
+
 /** Best-effort identity extraction from the populated CLAUDE.md / profile docs (FR-15). */
 export function readProfile(ctx: AppContext): UserProfile {
   const settings = ctx.settings.get();
@@ -86,6 +106,7 @@ export function readProfile(ctx: AppContext): UserProfile {
     links: [],
     documents: [],
     country: settings.country,
+    profileReady: computeProfileReady(ctx.repoRoot),
   };
 
   const claudeMd = path.join(ctx.repoRoot, 'CLAUDE.md');

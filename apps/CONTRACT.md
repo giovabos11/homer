@@ -10,7 +10,7 @@ All request/response shapes use the types in `apps/shared/types.ts`. All respons
 - `POST /api/connections/:name/check` → `Connection` (re-probe health)
 
 ## Profile & documents
-- `GET  /api/profile` → `UserProfile` (identity auto-extracted from profile docs)
+- `GET  /api/profile` → `UserProfile` (identity auto-extracted from profile docs; `profileReady:false` while `CLAUDE.md` or the candidate-profile skill file still contain the literal placeholder tokens `[PLACEHOLDER`/`[YOUR_` — drives the dashboard's first-run onboarding card)
 - `GET  /api/artifacts?path=<relative>` → `{ path, markdown }` — safe-listed roots only: `documents/`, `upskill/`, application archives.
 
 ## Jobs

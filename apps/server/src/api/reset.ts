@@ -75,6 +75,9 @@ export function buildPreview(ctx: AppContext, scopes: Scope[]): string[] {
 export function executeReset(ctx: AppContext, scopes: Scope[]): void {
   if (scopes.includes('db')) {
     const wipe = ctx.handle.sqlite.transaction(() => {
+      // Tables are wiped in declaration order, which is parent-before-child
+      // (applications → jobs etc.); defer FK checks to commit, when all rows are gone.
+      ctx.handle.sqlite.pragma('defer_foreign_keys = ON');
       for (const table of DATA_TABLES) ctx.handle.sqlite.prepare(`DELETE FROM ${table}`).run();
       ctx.handle.sqlite.prepare(`DELETE FROM sqlite_sequence`).run();
     });

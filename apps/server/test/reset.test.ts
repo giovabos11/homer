@@ -3,7 +3,7 @@ import path from 'node:path';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { makeApp, makeWorld, type TestWorld } from './helpers';
-import { buildPreview } from '../src/api/reset';
+import { buildPreview, executeReset } from '../src/api/reset';
 import { upsertJob } from '../src/sources/dedupe';
 
 describe('danger reset (FR-28)', () => {
@@ -65,5 +65,45 @@ describe('danger reset (FR-28)', () => {
 
   it('rejects unknown scopes', async () => {
     await request(app).post('/api/reset').send({ scopes: ['everything'], confirmation: 'RESET' }).expect(400);
+  });
+
+  // Regression: DATA_TABLES is wiped parent-before-child (jobs before
+  // applications, …), which used to trip "FOREIGN KEY constraint failed" the
+  // moment child rows existed. The defer_foreign_keys fix must survive a fully
+  // FK-linked graph: job → application → email + followup, schedule_event → prep_task.
+  it('db reset wipes FK-linked rows across all tables without a constraint failure', () => {
+    const sq = world.ctx.handle.sqlite;
+    const now = new Date().toISOString();
+    const { job } = upsertJob(world.ctx.db, {
+      source: 'freehire',
+      externalId: 'fk1',
+      canonicalUrl: 'https://example.com/fk1',
+      company: 'Cascade Co',
+      title: 'Backend Engineer',
+      location: null,
+      remoteType: 'remote',
+    });
+    const appId = Number(
+      sq.prepare(
+        `INSERT INTO applications (job_id, status, gate, created_at, updated_at) VALUES (?, 'tailoring', 'review', ?, ?)`,
+      ).run(job.id, now, now).lastInsertRowid,
+    );
+    sq.prepare(
+      `INSERT INTO emails (thread_key, direction, classification, application_id, subject) VALUES ('t-fk1', 'inbound', 'other', ?, 'Re: your application')`,
+    ).run(appId);
+    sq.prepare(`INSERT INTO followups (application_id, due_at) VALUES (?, ?)`).run(appId, now);
+    const eventId = Number(
+      sq.prepare(
+        `INSERT INTO schedule_events (type, application_id, title, starts_at) VALUES ('interview', ?, 'Tech screen', ?)`,
+      ).run(appId, now).lastInsertRowid,
+    );
+    sq.prepare(`INSERT INTO prep_tasks (event_id, text) VALUES (?, 'Review system design notes')`).run(eventId);
+
+    expect(() => executeReset(world.ctx, ['db'])).not.toThrow();
+
+    for (const table of ['jobs', 'applications', 'emails', 'followups', 'schedule_events', 'prep_tasks']) {
+      const { n } = sq.prepare(`SELECT count(*) AS n FROM ${table}`).get() as { n: number };
+      expect(n, `${table} should be empty after reset`).toBe(0);
+    }
   });
 });

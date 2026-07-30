@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  AlertOctagon, Bot, Chrome, Eye, Gauge, Loader2, MonitorSmartphone, ShieldCheck, SlidersHorizontal, Trash2, Zap,
+  AlertOctagon, Bot, CheckCircle2, Chrome, Eye, Gauge, Loader2, MonitorSmartphone, ShieldCheck,
+  SlidersHorizontal, Trash2, X, Zap,
 } from 'lucide-react';
 import type { GateMode, Settings } from '@shared';
 import { api } from '@/api/client';
@@ -225,6 +226,10 @@ function DangerZone() {
   const [preview, setPreview] = useState<string[] | null>(null);
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
+  // Persistent outcome of the last reset attempt — a failed reset must stay
+  // visible in the card (a transient toast is not enough for a data-loss action).
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
 
   const toggle = (s: Scope) =>
     setScopes((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
@@ -258,15 +263,53 @@ function DangerZone() {
           ))}
         </div>
 
+        {error && (
+          <div
+            role="alert"
+            className="rounded-lg border border-critical/40 bg-critical/8 p-3 flex items-start gap-2.5"
+          >
+            <AlertOctagon className="h-4 w-4 text-critical shrink-0 mt-0.5" />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-critical break-words">Reset failed — {error}</p>
+              <p className="text-xs text-ink-2 mt-0.5">
+                Nothing was deleted. Your jobs, applications, and artifacts are intact — fix the
+                issue above and try again.
+              </p>
+            </div>
+            <Button variant="ghost" size="icon-sm" onClick={() => setError(null)} aria-label="Dismiss error">
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        )}
+        {done && (
+          <div
+            role="status"
+            className="rounded-lg border border-good/40 bg-good/8 p-3 flex items-start gap-2.5"
+          >
+            <CheckCircle2 className="h-4 w-4 text-good shrink-0 mt-0.5" />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-good-text">{done}</p>
+              <p className="text-xs text-ink-2 mt-0.5">The board and queue reloaded with the fresh state.</p>
+            </div>
+            <Button variant="ghost" size="icon-sm" onClick={() => setDone(null)} aria-label="Dismiss">
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        )}
+
         {preview == null ? (
           <Button
             variant="destructive-outline"
             disabled={scopes.length === 0 || busy}
             onClick={async () => {
               setBusy(true);
+              setError(null);
+              setDone(null);
               try {
                 const res = await api.resetPreview(scopes);
                 setPreview(res.preview);
+              } catch (err) {
+                setError(err instanceof Error ? err.message : String(err));
               } finally {
                 setBusy(false);
               }
@@ -298,12 +341,22 @@ function DangerZone() {
                 disabled={confirm !== 'RESET' || busy}
                 onClick={async () => {
                   setBusy(true);
+                  setError(null);
+                  setDone(null);
                   try {
                     await api.reset(scopes);
-                    pushToast('warning', 'Reset executed — starting fresh');
                     setPreview(null);
                     setConfirm('');
+                    setDone(`Reset complete — wiped: ${scopes.join(', ')}.`);
+                    pushToast('warning', 'Reset executed — starting fresh');
+                    // Refresh the whole store so the kanban visibly empties
+                    // without a manual reload (SSE has no reset event).
                     await loadAll();
+                  } catch (err) {
+                    // Non-2xx → keep the preview open and surface the server's
+                    // detail loudly; the DELETEs run in one transaction, so a
+                    // failure means nothing was removed.
+                    setError(err instanceof Error ? err.message : String(err));
                   } finally {
                     setBusy(false);
                   }

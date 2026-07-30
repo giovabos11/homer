@@ -66,6 +66,7 @@ interface StoreState {
   endSearch(): void;
   beginAsk(requestId: string, prompt: string): void;
   setSettings(s: Settings): void;
+  setProfile(p: UserProfile): void;
   setJobs(jobs: Job[]): void;
   upsertJob(job: Job): void;
   upsertApplication(a: Application): void;
@@ -240,6 +241,9 @@ export const useStore = create<StoreState>((set, get) => ({
 
   setSettings(s) {
     set({ settings: s });
+  },
+  setProfile(p) {
+    set({ profile: p });
   },
   setJobs(jobs) {
     set({ jobs });

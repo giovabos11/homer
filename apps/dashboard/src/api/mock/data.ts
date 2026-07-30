@@ -431,6 +431,7 @@ export const PROFILE: UserProfile = {
     { name: 'cover-letter-template.md', path: 'documents/cover-letters/template.md', modifiedAt: daysAgo(9) },
   ],
   country: 'US',
+  profileReady: true,
 };
 
 export const SETTINGS: Settings = {

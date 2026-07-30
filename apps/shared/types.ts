@@ -149,6 +149,7 @@ export interface UserProfile {
   links: { label: string; url: string }[];
   documents: { name: string; path: string; modifiedAt: string }[];
   country: string;          // active job market, ISO-2 (e.g. "US")
+  profileReady: boolean;    // false while CLAUDE.md / candidate-profile skill still hold placeholder tokens
 }
 
 export interface FeedbackEntry {
