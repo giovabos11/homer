@@ -34,6 +34,13 @@ if not exist "%ROOT%apps\dashboard\node_modules" (
   popd
 )
 
+REM ---- Keep the Desktop shortcut fresh (correct path + icon, survives folder renames) ----
+if exist "%ROOT%homer.ico" (
+  if not exist "%LOCALAPPDATA%\Homer" mkdir "%LOCALAPPDATA%\Homer"
+  copy /y "%ROOT%homer.ico" "%LOCALAPPDATA%\Homer\homer.ico" >nul
+  powershell -NoProfile -Command "$ws = New-Object -ComObject WScript.Shell; $l = $ws.CreateShortcut(($env:USERPROFILE + '\Desktop\Homer.lnk')); $l.TargetPath = '%ROOT%Start-Homer.cmd'; $l.WorkingDirectory = '%ROOT%'; $l.IconLocation = ($env:LOCALAPPDATA + '\Homer\homer.ico,0'); $l.Description = 'Start Homer - your job application copilot'; $l.Save()" >nul 2>nul
+)
+
 REM ---- Prepare database (idempotent - safe on every start) ----
 pushd "%ROOT%apps\server"
 call npm run --silent db:migrate >nul 2>nul
