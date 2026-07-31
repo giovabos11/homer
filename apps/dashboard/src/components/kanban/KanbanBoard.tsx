@@ -4,7 +4,7 @@ import {
   type DragEndEvent, type DragStartEvent,
 } from '@dnd-kit/core';
 import { AnimatePresence, motion } from 'motion/react';
-import { Eye, GripVertical, Inbox } from 'lucide-react';
+import { Clock, Eye, GripVertical, Inbox } from 'lucide-react';
 import type { Application, Job, JobStatus } from '@shared';
 import { api } from '@/api/client';
 import { useStore } from '@/store/useStore';
@@ -44,7 +44,7 @@ const COLUMNS: Column[] = [
 
 const CELEBRATE_ON: JobStatus[] = ['applied', 'offer'];
 
-function KanbanCard({ job, app, dragging }: { job: Job; app?: Application; dragging?: boolean }) {
+function KanbanCard({ job, app, dragging, queued }: { job: Job; app?: Application; dragging?: boolean; queued?: boolean }) {
   const openDrawer = useJobDrawer((s) => s.open);
   const [reviewOpen, setReviewOpen] = useState(false);
   const salary = salaryLabel(job);
@@ -77,6 +77,11 @@ function KanbanCard({ job, app, dragging }: { job: Job; app?: Application; dragg
         )}
         <LegitBadge verdict={job.legitVerdict} reasons={job.legitReasons} compact />
         <SourceIcon source={job.source} />
+        {queued && (
+          <Badge variant="violet">
+            <Clock className="h-3 w-3" /> Queued for tailoring
+          </Badge>
+        )}
         {job.status === 'hired' && <Badge variant="good">Hired</Badge>}
         <span className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity text-ink-3">
           <GripVertical className="h-3.5 w-3.5" />
@@ -96,8 +101,8 @@ function KanbanCard({ job, app, dragging }: { job: Job; app?: Application; dragg
 
 // forwardRef: AnimatePresence mode="popLayout" measures exiting children via a
 // ref on the direct child, so this must compose that ref with dnd-kit's.
-const DraggableCard = forwardRef<HTMLDivElement, { job: Job; app?: Application }>(function DraggableCard(
-  { job, app },
+const DraggableCard = forwardRef<HTMLDivElement, { job: Job; app?: Application; queued?: boolean }>(function DraggableCard(
+  { job, app, queued },
   ref,
 ) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -119,7 +124,7 @@ const DraggableCard = forwardRef<HTMLDivElement, { job: Job; app?: Application }
       {...attributes}
       {...listeners}
     >
-      <KanbanCard job={job} app={app} />
+      <KanbanCard job={job} app={app} queued={queued} />
     </motion.div>
   );
 });
@@ -127,7 +132,14 @@ const DraggableCard = forwardRef<HTMLDivElement, { job: Job; app?: Application }
 /** Render cap per column — heavy columns collapse behind a "Show all" expander. */
 const COLUMN_CARD_CAP = 30;
 
-function BoardColumn({ column, jobs, appsByJob }: { column: Column; jobs: Job[]; appsByJob: Map<number, Application> }) {
+function BoardColumn({
+  column, jobs, appsByJob, queuedJobIds,
+}: {
+  column: Column;
+  jobs: Job[];
+  appsByJob: Map<number, Application>;
+  queuedJobIds: Set<number>;
+}) {
   const { setNodeRef, isOver } = useDroppable({ id: column.key });
   const [showAll, setShowAll] = useState(false);
   const capped = !showAll && jobs.length > COLUMN_CARD_CAP;
@@ -153,7 +165,12 @@ function BoardColumn({ column, jobs, appsByJob }: { column: Column; jobs: Job[];
       >
         <AnimatePresence mode="popLayout">
           {visible.map((j) => (
-            <DraggableCard key={j.id} job={j} app={appsByJob.get(j.id)} />
+            <DraggableCard
+              key={j.id}
+              job={j}
+              app={appsByJob.get(j.id)}
+              queued={queuedJobIds.has(j.id) && ['discovered', 'screened'].includes(j.status)}
+            />
           ))}
         </AnimatePresence>
         {capped && (
@@ -178,6 +195,7 @@ function BoardColumn({ column, jobs, appsByJob }: { column: Column; jobs: Job[];
 export function KanbanBoard() {
   const jobs = useStore((s) => s.jobs);
   const applications = useStore((s) => s.applications);
+  const tasks = useStore((s) => s.tasks);
   const pushToast = useStore((s) => s.pushToast);
   const upsertJob = useStore((s) => s.upsertJob);
   const [activeJob, setActiveJob] = useState<Job | null>(null);
@@ -188,6 +206,19 @@ export function KanbanBoard() {
     for (const a of applications) m.set(a.jobId, a);
     return m;
   }, [applications]);
+
+  // Jobs with a live tailor task — their cards wear the "Queued for tailoring"
+  // badge until the worker actually picks them up (SSE keeps tasks fresh).
+  const queuedJobIds = useMemo(() => {
+    const s = new Set<number>();
+    for (const t of tasks) {
+      if (t.type === 'tailor' && (t.state === 'pending' || t.state === 'running')) {
+        const jobId = t.payload.jobId;
+        if (typeof jobId === 'number') s.add(jobId);
+      }
+    }
+    return s;
+  }, [tasks]);
 
   const byColumn = useMemo(() => {
     const m = new Map<string, Job[]>();
@@ -222,7 +253,14 @@ export function KanbanBoard() {
       if (app) {
         await api.patchApplication(app.id, { status: target });
       } else if (target === 'tailoring' || target === 'ready_for_review') {
-        await api.applyJob(job.id);
+        const res = await api.applyJob(job.id);
+        const n = res.queuePosition ?? 0;
+        pushToast(
+          'info',
+          n > 0
+            ? `Queued — starts after ${n} running/queued task${n === 1 ? '' : 's'}`
+            : 'Queued — starting now',
+        );
       } else if (target === 'skipped' || target === 'withdrawn') {
         await api.skipJob(job.id);
       } else {
@@ -240,7 +278,7 @@ export function KanbanBoard() {
     <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
       <div className="flex gap-3 overflow-x-auto pb-3 h-full items-stretch">
         {COLUMNS.map((c) => (
-          <BoardColumn key={c.key} column={c} jobs={byColumn.get(c.key) ?? []} appsByJob={appsByJob} />
+          <BoardColumn key={c.key} column={c} jobs={byColumn.get(c.key) ?? []} appsByJob={appsByJob} queuedJobIds={queuedJobIds} />
         ))}
       </div>
       <DragOverlay dropAnimation={{ duration: 180 }}>

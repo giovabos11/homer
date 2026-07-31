@@ -82,14 +82,35 @@ export function TabsTrigger({ className, ...props }: React.ComponentPropsWithout
 /* ----------------------------- Tooltip ----------------------------- */
 export const TooltipProvider = TooltipPrimitive.Provider;
 
-export function Tip({ label, children }: { label: React.ReactNode; children: React.ReactElement }) {
+/**
+ * Note for callers: the trigger uses Radix `asChild`, which merges props onto
+ * the child. A child whose `className` is a *function* (react-router `NavLink`)
+ * gets that function stringified into the class attribute and loses all its
+ * styling — pass a plain string className instead.
+ */
+export function Tip({
+  label,
+  children,
+  side = 'top',
+  align = 'center',
+  sideOffset = 6,
+}: {
+  label: React.ReactNode;
+  children: React.ReactElement;
+  side?: 'top' | 'right' | 'bottom' | 'left';
+  align?: 'start' | 'center' | 'end';
+  sideOffset?: number;
+}) {
   return (
     <TooltipPrimitive.Root delayDuration={250}>
       <TooltipPrimitive.Trigger asChild>{children}</TooltipPrimitive.Trigger>
       <TooltipPrimitive.Portal>
         <TooltipPrimitive.Content
-          sideOffset={6}
-          className="z-50 max-w-72 rounded-md border border-line bg-raised px-2.5 py-1.5 text-xs text-ink-2 shadow-[var(--shadow-pop)]"
+          side={side}
+          align={align}
+          sideOffset={sideOffset}
+          collisionPadding={8}
+          className="tip-content z-50 max-w-72 rounded-md border border-line bg-raised px-2.5 py-1.5 text-xs text-ink-2 shadow-[var(--shadow-pop)]"
         >
           {label}
         </TooltipPrimitive.Content>

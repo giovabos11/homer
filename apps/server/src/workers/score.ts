@@ -20,6 +20,7 @@ import type { LegitVerdict } from '@shared/types';
 import { fenceUntrusted, readRepoFile, strictJsonFooter } from '../agent/prompts';
 import { runStructured } from '../agent/structured';
 import { mergeVerdicts, structuralSignals, verdictFromSignals } from '../pipeline/legitimacy';
+import { PRIORITY } from '../queue/queue';
 import { applications, taskQueue } from '../db/schema';
 import { toJob } from '../db/serialize';
 import { fetchJobDetailFromPortal } from '../sources/enrich';
@@ -61,12 +62,12 @@ export const NO_DESCRIPTION_NOTE =
 const ACTIVE_TASK_STATES = ['pending', 'running', 'paused', 'needs_human', 'waiting_session'] as const;
 
 /**
- * FR-9 auto-advance: a freshly screened job that is legit, not location-vetoed,
- * and meets the configured gate flows straight into tailoring (the submit gate
- * still controls actual submission). Deduped against existing applications and
- * active tailor tasks; manual records are never advanced.
+ * FR-9 auto-advance eligibility: screened + legit + not manual + no location
+ * veto + fit meets the configured gate + no existing application or active
+ * tailor task. Shared by the at-scoring-time advance below and the recovery
+ * backfill sweep.
  */
-export function maybeAutoAdvance(ctx: AppContext, job: JobRow): boolean {
+export function autoAdvanceEligible(ctx: AppContext, job: JobRow): boolean {
   const settings = ctx.settings.get();
   if (settings.autoAdvance === 'off') return false;
   if (job.status !== 'screened' || job.legitVerdict !== 'legit' || job.managed === 'manual') return false;
@@ -93,9 +94,17 @@ export function maybeAutoAdvance(ctx: AppContext, job: JobRow): boolean {
       return false;
     }
   });
-  if (alreadyQueued) return false;
+  return !alreadyQueued;
+}
 
-  ctx.queue.enqueue('tailor', { payload: { jobId: job.id, trigger: 'auto_advance' } });
+/**
+ * FR-9 auto-advance: a freshly screened job that clears the eligibility gate
+ * flows straight into tailoring (the submit gate still controls actual
+ * submission). Priority 5: ahead of bulk scoring, behind user clicks.
+ */
+export function maybeAutoAdvance(ctx: AppContext, job: JobRow): boolean {
+  if (!autoAdvanceEligible(ctx, job)) return false;
+  ctx.queue.enqueue('tailor', { priority: PRIORITY.autoAdvance, payload: { jobId: job.id, trigger: 'auto_advance' } });
   ctx.bus.emit({
     type: 'toast',
     level: 'info',
@@ -241,7 +250,7 @@ export const scoreWorker: Worker = {
         prompt: buildScorePrompt(ctx, job),
         cwd: ctx.repoRoot,
         allowedTools: ['WebSearch', 'WebFetch'],
-        model: ctx.settings.get().modelPipeline,
+        model: ctx.settings.get().modelScore,
         timeoutMs: ctx.config.agent.defaultTimeoutMs,
       },
       scoreResultSchema,

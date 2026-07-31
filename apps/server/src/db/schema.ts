@@ -112,6 +112,7 @@ export const taskQueue = sqliteTable(
     payloadJson: text('payload_json').notNull().default('{}'),
     state: text('state').notNull().default('pending'),
     cursorJson: text('cursor_json'),
+    priority: integer('priority').notNull().default(0),
     runAfter: text('run_after'),
     attempts: integer('attempts').notNull().default(0),
     lastError: text('last_error'),

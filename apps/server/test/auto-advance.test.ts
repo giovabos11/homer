@@ -98,6 +98,14 @@ describe('auto-advance after scoring', () => {
     expect(tailorTasksFor(a.id)).toBe(0);
 
     await request(app).patch('/api/settings').send({ autoAdvance: 'all', autoAdvanceThreshold: 99 }).expect(200);
+    // The settings change triggers the backfill sweep — OffModeCo (screened
+    // while advance was off) is retro-advanced at priority 5.
+    expect(tailorTasksFor(a.id)).toBe(1);
+    const backfill = world.ctx.queue.list().find((t) => t.type === 'tailor')!;
+    expect((JSON.parse(backfill.payloadJson) as { trigger?: string }).trigger).toBe('auto_advance_backfill');
+    expect(backfill.priority).toBe(5);
+    world.ctx.queue.cancel(backfill.id); // keep the next tick focused on b's score
+
     const b = makeJob('LowFitCo Two'); // fit 40 — 'all' ignores the threshold
     await scoreOnly(b.id);
     expect(tailorTasksFor(b.id)).toBe(1);

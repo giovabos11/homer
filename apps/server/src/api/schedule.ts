@@ -6,6 +6,7 @@ import type { SkillProgress } from '@shared/types';
 import { prepTasks, scheduleEvents, skillsProgress } from '../db/schema';
 import { toPrepTask, toScheduleEvent } from '../db/serialize';
 import { recomputeSkillsProgress } from '../workers/prep-guide';
+import { PRIORITY } from '../queue/queue';
 import type { AppContext } from '../context';
 import { ApiError, idParam, parseBody, parseQuery } from './util';
 
@@ -61,7 +62,7 @@ export function scheduleRoutes(ctx: AppContext): Router {
     const id = idParam(req);
     const row = ctx.db.select().from(scheduleEvents).where(eq(scheduleEvents.id, id)).get();
     if (!row) throw new ApiError(404, 'not_found', `No schedule event ${id}`);
-    const task = ctx.queue.enqueue('prep_guide', { payload: { eventId: id } });
+    const task = ctx.queue.enqueue('prep_guide', { priority: PRIORITY.user, payload: { eventId: id } });
     res.json({ taskId: task.id });
   });
 

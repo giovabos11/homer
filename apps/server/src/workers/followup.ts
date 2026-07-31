@@ -82,7 +82,7 @@ async function draftFollowup(
         strictJsonFooter('{ "subject": string, "body": string (the email body, 60-120 words) }'),
       ].join('\n'),
       cwd: ctx.repoRoot,
-      model: ctx.settings.get().modelPipeline,
+      model: ctx.settings.get().modelFollowup,
       timeoutMs: ctx.config.agent.defaultTimeoutMs,
     });
     const parsed = draftSchema.safeParse(result.structured);

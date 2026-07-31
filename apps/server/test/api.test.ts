@@ -2,6 +2,8 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
+import { jobs } from '../src/db/schema';
 import { makeApp, makeWorld, type TestWorld } from './helpers';
 
 describe('API smoke (contract)', () => {
@@ -45,13 +47,65 @@ describe('API smoke (contract)', () => {
     expect(skipped.body.status).toBe('skipped');
   });
 
-  it('GET /api/jobs/top ranks by salary with fitWeighted toggle', async () => {
+  it('GET /api/jobs/top?by=salary ranks by raw salary with fitWeighted toggle', async () => {
     await request(app).post('/api/jobs').send({ company: 'LowPay', title: 'Dev', salaryMax: 90000 }).expect(201);
     await request(app).post('/api/jobs').send({ company: 'HighPay', title: 'Dev', salaryMax: 200000 }).expect(201);
-    const top = await request(app).get('/api/jobs/top?limit=5').expect(200);
+    const top = await request(app).get('/api/jobs/top?by=salary&limit=5').expect(200);
     expect(top.body[0].company).toBe('HighPay');
-    const weighted = await request(app).get('/api/jobs/top?fitWeighted=true').expect(200);
+    const weighted = await request(app).get('/api/jobs/top?by=salary&fitWeighted=true').expect(200);
     expect(weighted.body.length).toBe(2);
+  });
+
+  it('GET /api/jobs/top defaults to expected-value ranking (FR-17)', async () => {
+    const mk = async (company: string, body: Record<string, unknown>) =>
+      (await request(app).post('/api/jobs').send({ company, title: 'Dev', ...body }).expect(201)).body.id as number;
+    const setJob = (id: number, patch: Partial<typeof jobs.$inferSelect>) =>
+      world.ctx.db.update(jobs).set(patch).where(eq(jobs.id, id)).run();
+
+    // A: midpoint (100k+200k)/2=150k, fit 90 → 150000×0.9^1.5 ≈ 128072
+    const a = await mk('MidpointCo', { salaryMin: 100000, salaryMax: 200000 });
+    setJob(a, { fitScore: 90, legitVerdict: 'legit' });
+    // B: single bound 300k, fit 40 → 300000×0.4^1.5 ≈ 75895 — trophy salary loses to reachable fit
+    const b = await mk('TrophyCo', { salaryMax: 300000 });
+    setJob(b, { fitScore: 40, legitVerdict: 'legit' });
+    // C: same as A but predicted → ×0.85 ≈ 108861
+    const c = await mk('PredictedCo', { salaryMin: 100000, salaryMax: 200000 });
+    setJob(c, { fitScore: 90, legitVerdict: 'legit', salaryPredicted: 1 });
+    // D: huge salary, never scored → ranks below every scored job
+    const d = await mk('UnscoredCo', { salaryMax: 500000 });
+    // Excluded: quarantined / skipped statuses, suspicious verdict
+    const e = await mk('QuarantineCo', { salaryMax: 400000 });
+    setJob(e, { fitScore: 95, status: 'quarantined' });
+    const f = await mk('SkippedCo', { salaryMax: 400000, status: 'skipped' });
+    setJob(f, { fitScore: 95 });
+    const g = await mk('SusCo', { salaryMax: 400000 });
+    setJob(g, { fitScore: 95, legitVerdict: 'suspicious' });
+
+    const res = await request(app).get('/api/jobs/top?limit=10').expect(200);
+    const names = res.body.map((j: { company: string }) => j.company);
+    expect(names).toEqual(['MidpointCo', 'PredictedCo', 'TrophyCo', 'UnscoredCo']);
+
+    const ev = (mid: number, fit: number, predicted = false) =>
+      Math.round(mid * Math.pow(fit / 100, 1.5) * (predicted ? 0.85 : 1));
+    expect(res.body[0].opportunityScore).toBe(ev(150000, 90));        // midpoint + exponent
+    expect(res.body[1].opportunityScore).toBe(ev(150000, 90, true));  // predicted ×0.85
+    expect(res.body[2].opportunityScore).toBe(ev(300000, 40));        // single bound
+    expect(res.body[3].opportunityScore).toBeNull();                  // unscored → null, last
+  });
+
+  it('POST /api/jobs/:id/apply returns a queue position and enqueues at user priority', async () => {
+    // A bulk backlog the user click must jump.
+    world.ctx.queue.enqueue('score', { payload: { jobId: 991 } });
+    world.ctx.queue.enqueue('score', { payload: { jobId: 992 } });
+
+    const job = await request(app).post('/api/jobs').send({ company: 'ClickCo', title: 'Dev' }).expect(201);
+    const res = await request(app).post(`/api/jobs/${job.body.id}/apply`).expect(200);
+    expect(typeof res.body.taskId).toBe('number');
+    expect(res.body.queuePosition).toBe(0); // priority 10 beats the pending bulk scores
+
+    const task = world.ctx.queue.get(res.body.taskId)!;
+    expect(task.priority).toBe(10);
+    expect(world.ctx.queue.claim()?.id).toBe(task.id); // claimed ahead of the backlog
   });
 
   it('settings: GET defaults, PATCH validated partial, reject unknown/invalid', async () => {

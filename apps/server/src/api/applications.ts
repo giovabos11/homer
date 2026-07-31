@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { applications, jobs } from '../db/schema';
 import { toApplication } from '../db/serialize';
 import { addAudit, updateApplication, updateJob } from '../workers/helpers';
+import { PRIORITY } from '../queue/queue';
 import type { AppContext } from '../context';
 import { ApiError, idParam, parseBody, parseQuery } from './util';
 
@@ -88,7 +89,7 @@ export function applicationRoutes(ctx: AppContext): Router {
     }
     updateApplication(ctx, id, { approvedAt: new Date().toISOString() });
     addAudit(ctx, id, 'gate.user_approved', {});
-    const task = ctx.queue.enqueue('apply', { payload: { applicationId: id } });
+    const task = ctx.queue.enqueue('apply', { priority: PRIORITY.user, payload: { applicationId: id } });
     res.json({ taskId: task.id });
   });
 
@@ -109,7 +110,7 @@ export function applicationRoutes(ctx: AppContext): Router {
       notesJson: JSON.stringify(notes),
     });
     addAudit(ctx, id, 'gate.user_rejected', { reason: body.reason, retailor: body.retailor === true });
-    if (body.retailor) ctx.queue.enqueue('tailor', { payload: { jobId: existing.jobId } });
+    if (body.retailor) ctx.queue.enqueue('tailor', { priority: PRIORITY.user, payload: { jobId: existing.jobId } });
     const job = ctx.db.select().from(jobs).where(eq(jobs.id, existing.jobId)).get();
     res.json(toApplication(row, job));
   });

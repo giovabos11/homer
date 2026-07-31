@@ -81,11 +81,12 @@ const realApi: Api = {
       })}`,
     ),
   getJob: (id: number) => get<Job>(`/api/jobs/${id}`),
-  getTopJobs: (fitWeighted: boolean, limit = 10) =>
-    get<Job[]>(`/api/jobs/top${qs({ by: 'salary', fitWeighted, limit })}`),
+  getTopJobs: (by: 'opportunity' | 'salary', limit = 10) =>
+    get<Job[]>(`/api/jobs/top${qs({ by, limit })}`),
   createJob: (body: Partial<Job>) => post<Job>('/api/jobs', body),
-  applyFromUrl: (url: string) => post<{ job: Job; taskId: number }>('/api/jobs/from-url', { url }),
-  applyJob: (id: number) => post<{ taskId: number }>(`/api/jobs/${id}/apply`),
+  applyFromUrl: (url: string) =>
+    post<{ job: Job; taskId: number; queuePosition?: number }>('/api/jobs/from-url', { url }),
+  applyJob: (id: number) => post<{ taskId: number; queuePosition?: number }>(`/api/jobs/${id}/apply`),
   fetchJobDetails: (id: number) => post<{ job: Job }>(`/api/jobs/${id}/fetch-details`),
   skipJob: (id: number) => post<Job>(`/api/jobs/${id}/skip`),
   overrideLegit: (id: number, note: string) =>

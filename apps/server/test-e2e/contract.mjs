@@ -53,6 +53,7 @@ const jobsList = await apiJson('/api/jobs?limit=200');
 check('GET /api/jobs', jobsList, 200, (b) => typeof b.total === 'number' && Array.isArray(b.jobs));
 check('GET /api/jobs (bad minScore → 400)', await apiJson('/api/jobs?minScore=200'), 400, isErrShape);
 check('GET /api/jobs/top (fitWeighted)', await apiJson('/api/jobs/top?by=salary&fitWeighted=true&limit=5'), 200, (b) => Array.isArray(b));
+check('GET /api/jobs/top (EV default)', await apiJson('/api/jobs/top?limit=5'), 200, (b) => Array.isArray(b) && b.every((j) => 'opportunityScore' in j));
 const someJob = jobsList.body.jobs.find((j) => j.status === 'screened' || j.status === 'discovered');
 check('GET /api/jobs/:id', await apiJson(`/api/jobs/${someJob.id}`), 200, (b) => b.id === someJob.id && 'descriptionMd' in b);
 check('GET /api/jobs/999999 → 404', await apiJson('/api/jobs/999999'), 404, isErrShape);

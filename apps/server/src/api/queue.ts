@@ -4,6 +4,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { QueueTask, ScheduleNextRuns, SourceBudget, TaskType } from '@shared/types';
 import { toQueueTask, toSourceBudget } from '../db/serialize';
+import { PRIORITY } from '../queue/queue';
 import type { AppContext } from '../context';
 import { ApiError, idParam, parseBody } from './util';
 
@@ -43,6 +44,7 @@ export function queueRoutes(ctx: AppContext): Router {
     );
     const searchId = crypto.randomUUID();
     ctx.queue.enqueue('discover', {
+      priority: PRIORITY.user,
       payload: {
         trigger: 'manual_search',
         searchId,
@@ -64,7 +66,7 @@ export function queueRoutes(ctx: AppContext): Router {
   // pending/running, that task is returned instead of enqueueing another.
   // Per-source budgets are still respected inside the worker.
   router.post('/queue/run-discovery', (_req, res) => {
-    const row = ctx.queue.enqueue('discover', { dedupe: true, payload: { trigger: 'manual_run' } });
+    const row = ctx.queue.enqueue('discover', { dedupe: true, priority: PRIORITY.user, payload: { trigger: 'manual_run' } });
     const dto = toQueueTask(row);
     ctx.bus.emit({ type: 'queue.updated', task: dto });
     res.json({ taskId: row.id });

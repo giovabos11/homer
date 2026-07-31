@@ -7,9 +7,12 @@
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { jobs } from '../src/db/schema';
+import { applications, jobs } from '../src/db/schema';
 import { upsertJob } from '../src/sources/dedupe';
-import { reclaimStaleTasks, recoverStuckTailoringJobs, repairQuarantinedStatuses, STALE_CLAIM_MS } from '../src/queue/recovery';
+import {
+  AUTO_ADVANCE_BACKFILL_CAP, backfillAutoAdvance, reclaimStaleTasks,
+  recoverStuckTailoringJobs, repairQuarantinedStatuses, STALE_CLAIM_MS,
+} from '../src/queue/recovery';
 import { makeApp, makeFakeRepo, makeWorld, type TestWorld } from './helpers';
 
 const scoreJson = {
@@ -164,5 +167,59 @@ describe('zombie recovery & bulk retry', () => {
     const normal = makeJob();
     const res2 = await request(app).post(`/api/jobs/${normal.id}/skip`).expect(200);
     expect(res2.body.status).toBe('skipped');
+  });
+
+  // ---- auto-advance backfill sweep ----
+
+  const eligible = (fit = 85) => ({
+    status: 'screened' as const,
+    legitVerdict: 'legit' as const,
+    fitScore: fit,
+    fitBreakdownJson: JSON.stringify({ technical: fit, experience: fit, behavioral: fit, career: fit, locationVeto: false }),
+  });
+
+  function tailorTasks() {
+    return world.ctx.queue.list().filter((t) => t.type === 'tailor');
+  }
+
+  it('backfill queues eligible screened jobs at priority 5 and skips every ineligible case', () => {
+    const good = makeJob(eligible());
+    makeJob(eligible(40)); // below threshold (70)
+    makeJob({ ...eligible(), legitVerdict: 'suspicious' }); // not legit
+    makeJob({
+      ...eligible(),
+      fitBreakdownJson: JSON.stringify({ technical: 85, experience: 85, behavioral: 85, career: 85, locationVeto: true }),
+    }); // vetoed
+    const withApp = makeJob(eligible());
+    const now = new Date().toISOString();
+    world.ctx.db
+      .insert(applications)
+      .values({ jobId: withApp.id, status: 'tailoring', gate: 'review', createdAt: now, updatedAt: now })
+      .run();
+    const withTask = makeJob(eligible());
+    world.ctx.queue.enqueue('tailor', { payload: { jobId: withTask.id } }); // live tailor task
+
+    const n = backfillAutoAdvance(world.ctx);
+    expect(n).toBe(1);
+    const queued = tailorTasks().filter(
+      (t) => (JSON.parse(t.payloadJson) as { trigger?: string }).trigger === 'auto_advance_backfill',
+    );
+    expect(queued).toHaveLength(1);
+    expect((JSON.parse(queued[0]!.payloadJson) as { jobId?: number }).jobId).toBe(good.id);
+    expect(queued[0]!.priority).toBe(5);
+
+    // Second sweep is a no-op — the queued task itself dedupes the job.
+    expect(backfillAutoAdvance(world.ctx)).toBe(0);
+  });
+
+  it('backfill respects the per-sweep cap and does nothing when autoAdvance is off', () => {
+    world.ctx.settings.patch({ autoAdvance: 'off' });
+    for (let i = 0; i < AUTO_ADVANCE_BACKFILL_CAP + 2; i += 1) makeJob(eligible());
+    expect(backfillAutoAdvance(world.ctx)).toBe(0); // off → never
+
+    world.ctx.settings.patch({ autoAdvance: 'threshold' });
+    expect(backfillAutoAdvance(world.ctx)).toBe(AUTO_ADVANCE_BACKFILL_CAP); // capped
+    expect(backfillAutoAdvance(world.ctx)).toBe(2); // remainder on the next sweep
+    expect(backfillAutoAdvance(world.ctx)).toBe(0);
   });
 });

@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  AlertOctagon, Bot, CheckCircle2, Chrome, Cpu, Eye, FastForward, Gauge, Loader2,
-  MonitorSmartphone, ShieldCheck, SlidersHorizontal, Trash2, X, Zap,
+  AlertOctagon, Bot, CheckCircle2, Chrome, Cpu, Eye, FastForward, Gauge, Globe2, Loader2,
+  Minus, MonitorSmartphone, Plus, RotateCcw, ShieldCheck, SlidersHorizontal, Trash2, X, Zap,
 } from 'lucide-react';
 import type { GateMode, ModelChoice, Settings } from '@shared';
 import { api } from '@/api/client';
@@ -23,6 +23,88 @@ const GATE_OPTIONS: { value: GateMode; label: string; icon: typeof Eye; desc: st
 ];
 
 const OVERRIDE_SOURCES = ['linkedin', 'ats_boards', 'remoteok', 'usajobs'];
+
+const COUNTRIES: { code: string; name: string; note?: string }[] = [
+  { code: 'US', name: 'United States', note: 'full portal set' },
+  { code: 'DK', name: 'Denmark', note: 'upstream portals' },
+  { code: 'GB', name: 'United Kingdom', note: 'via /add-portal' },
+  { code: 'CA', name: 'Canada', note: 'via /add-portal' },
+  { code: 'DE', name: 'Germany', note: 'via /add-portal' },
+  { code: 'ES', name: 'Spain', note: 'via /add-portal' },
+  { code: 'MX', name: 'Mexico', note: 'via /add-portal' },
+];
+
+function CountryFlag({ code, name, width = 20 }: { code: string; name: string; width?: number }) {
+  const iso = code.toLowerCase();
+  return (
+    <img
+      src={`https://flagcdn.com/w40/${iso}.png`}
+      srcSet={`https://flagcdn.com/w80/${iso}.png 2x`}
+      width={width}
+      alt={name}
+      loading="lazy"
+      className="rounded-[3px] shrink-0 border border-line/60"
+      style={{ height: 'auto' }}
+    />
+  );
+}
+
+/* --------------------------------- Job market --------------------------------- */
+function JobMarketCard() {
+  const profile = useStore((s) => s.profile);
+  const settings = useStore((s) => s.settings);
+  const setSettings = useStore((s) => s.setSettings);
+  const country = settings?.country ?? profile?.country ?? 'US';
+  const active = COUNTRIES.find((c) => c.code === country);
+
+  return (
+    <Card>
+      <CardHeader
+        title={
+          <span className="inline-flex items-center gap-1.5">
+            <Globe2 className="h-4 w-4 text-accent" /> Job market
+          </span>
+        }
+        hint="Which country's portal set discovery targets"
+        right={
+          <Select
+            value={country}
+            onValueChange={async (v) => {
+              const s = await api.patchSettings({ country: v });
+              setSettings(s);
+            }}
+          >
+            <SelectTrigger className="w-40">
+              <SelectValue>
+                <span className="inline-flex items-center gap-1.5">
+                  {active ? <CountryFlag code={active.code} name={active.name} /> : <Globe2 className="h-4 w-4 text-ink-3" />}
+                  <span>{active?.name ?? country}</span>
+                </span>
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {COUNTRIES.map((c) => (
+                <SelectItem key={c.code} value={c.code}>
+                  <span className="inline-flex items-center gap-2">
+                    <CountryFlag code={c.code} name={c.name} /> {c.name}
+                    {c.note && <span className="text-[10px] text-ink-3">({c.note})</span>}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        }
+      />
+      <div className="px-4 pb-4">
+        <p className="text-[11px] text-ink-3 leading-relaxed">
+          Switching markets swaps the portal set discovery runs against and the locations it searches. The United States
+          ships with the full portal set; other countries fall back to the upstream portals or whatever you register with{' '}
+          <code className="font-mono text-[10px] bg-overlay border border-line rounded px-1">/add-portal</code>.
+        </p>
+      </div>
+    </Card>
+  );
+}
 
 function GateCard() {
   const settings = useStore((s) => s.settings);
@@ -179,6 +261,40 @@ function AutomationCard() {
           />
         </div>
         <div>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold text-ink uppercase tracking-wide">Parallel agents</p>
+              <p className="text-[11px] text-ink-3 mt-0.5 leading-relaxed max-w-md">
+                More parallelism drains the queue faster but consumes your usage window faster.
+                Apply and discovery always run alone.
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5 rounded-lg border border-line bg-raised/50 p-1">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Fewer parallel agents"
+                disabled={settings.queueConcurrency <= 1}
+                onClick={() => void patch({ queueConcurrency: Math.max(1, settings.queueConcurrency - 1) })}
+              >
+                <Minus className="h-3.5 w-3.5" />
+              </Button>
+              <span className="w-6 text-center text-sm font-semibold text-ink tabular" aria-live="polite">
+                {settings.queueConcurrency}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="More parallel agents"
+                disabled={settings.queueConcurrency >= 4}
+                onClick={() => void patch({ queueConcurrency: Math.min(4, settings.queueConcurrency + 1) })}
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        </div>
+        <div>
           <p className="text-xs font-semibold text-ink uppercase tracking-wide mb-2">Apply driver</p>
           <div className="grid grid-cols-2 gap-2">
             {(
@@ -293,17 +409,55 @@ function AutoAdvanceCard() {
 
 /* ---------------------------------- Models card ---------------------------------- */
 const MODEL_OPTIONS: { value: ModelChoice; label: string }[] = [
-  { value: 'default', label: 'Default (your Claude Code model)' },
   { value: 'haiku', label: 'Haiku (fastest + cheapest)' },
   { value: 'sonnet', label: 'Sonnet' },
   { value: 'opus', label: 'Opus' },
+  { value: 'default', label: 'Default (your Claude Code model)' },
 ];
 
-const MODEL_ROWS: { key: 'modelAsk' | 'modelSetup' | 'modelScraper' | 'modelPipeline'; label: string; desc: string }[] = [
-  { key: 'modelAsk', label: 'Ask chat', desc: 'Quick Q&A over your pipeline — cheap models do fine here' },
-  { key: 'modelSetup', label: 'Profile setup', desc: 'Interview & document-scan onboarding sessions' },
-  { key: 'modelScraper', label: 'Scraper', desc: 'Search-query regeneration from your profile' },
-  { key: 'modelPipeline', label: 'Application pipeline', desc: 'Scoring, resume tailoring, prep guides, email drafting' },
+type ModelKey =
+  | 'modelScore' | 'modelEmail' | 'modelScraper' | 'modelAsk'
+  | 'modelTailor' | 'modelPrep' | 'modelFollowup' | 'modelFeedback' | 'modelSetup';
+
+/** Recommended per-task defaults (mirrors config/default.json). */
+const RECOMMENDED: Record<ModelKey, ModelChoice> = {
+  modelScore: 'haiku',
+  modelEmail: 'haiku',
+  modelScraper: 'haiku',
+  modelAsk: 'haiku',
+  modelTailor: 'sonnet',
+  modelPrep: 'sonnet',
+  modelFollowup: 'sonnet',
+  modelFeedback: 'sonnet',
+  modelSetup: 'sonnet',
+};
+
+const MODEL_GROUPS: {
+  group: string;
+  hint: string;
+  rows: { key: ModelKey; label: string; desc: string }[];
+}[] = [
+  {
+    group: 'Triage & volume',
+    hint: 'Runs on every discovered job or email — cost adds up fastest here',
+    rows: [
+      { key: 'modelScore', label: 'Score', desc: 'Fit scoring + legitimacy verification per job' },
+      { key: 'modelEmail', label: 'Email', desc: 'Inbox scanning and approved-send drafting' },
+      { key: 'modelScraper', label: 'Scraper', desc: 'Search-query regeneration from your profile' },
+      { key: 'modelAsk', label: 'Ask chat', desc: 'Quick Q&A over your pipeline' },
+    ],
+  },
+  {
+    group: 'Quality',
+    hint: 'Writing the employer (or you) actually reads — worth a stronger model',
+    rows: [
+      { key: 'modelTailor', label: 'Tailor', desc: 'Resume + cover letter drafter and reviewer' },
+      { key: 'modelPrep', label: 'Prep guides', desc: 'Interview study guides per scheduled event' },
+      { key: 'modelFollowup', label: 'Follow-ups', desc: 'Polite nudge emails after quiet applications' },
+      { key: 'modelFeedback', label: 'Feedback', desc: 'Retro analysis and plan-change proposals' },
+      { key: 'modelSetup', label: 'Profile setup', desc: 'Interview & document-scan onboarding sessions' },
+    ],
+  },
 ];
 
 function ModelsCard() {
@@ -311,6 +465,9 @@ function ModelsCard() {
   const setSettings = useStore((s) => s.setSettings);
   if (!settings) return null;
   const patch = async (body: Partial<Settings>) => setSettings(await api.patchSettings(body));
+  const allRecommended = (Object.keys(RECOMMENDED) as ModelKey[]).every(
+    (k) => settings[k] === RECOMMENDED[k],
+  );
 
   return (
     <Card>
@@ -320,28 +477,59 @@ function ModelsCard() {
             <Cpu className="h-4 w-4 text-accent" /> Models
           </span>
         }
-        hint="Which Claude model each task family runs on — all on your subscription login"
+        hint="Which Claude model each task runs on — all on your subscription login"
       />
-      <div className="px-4 pb-4 space-y-2.5">
-        {MODEL_ROWS.map((row) => (
-          <div key={row.key} className="flex items-center gap-3">
-            <div className="flex-1 min-w-0">
-              <p className="text-[13px] font-medium text-ink">{row.label}</p>
-              <p className="text-[11px] text-ink-3">{row.desc}</p>
+      <div className="px-4 pb-4 space-y-4">
+        {MODEL_GROUPS.map((g) => (
+          <div key={g.group}>
+            <div className="flex items-baseline gap-2 mb-2">
+              <p className="text-xs font-semibold text-ink uppercase tracking-wide">{g.group}</p>
+              <p className="text-[11px] text-ink-3">{g.hint}</p>
             </div>
-            <Select value={settings[row.key]} onValueChange={(v) => void patch({ [row.key]: v as ModelChoice })}>
-              <SelectTrigger className="w-64 h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {MODEL_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="rounded-xl border border-line divide-y divide-line overflow-hidden">
+              {g.rows.map((row) => {
+                const recommended = settings[row.key] === RECOMMENDED[row.key];
+                return (
+                  <div key={row.key} className="flex items-center gap-3 px-3 py-2 bg-raised/40">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-medium text-ink inline-flex items-center gap-1.5">
+                        {row.label}
+                        {recommended && (
+                          <Badge variant="good" className="text-[10px]">Recommended</Badge>
+                        )}
+                      </p>
+                      <p className="text-[11px] text-ink-3">{row.desc}</p>
+                    </div>
+                    <Select
+                      value={settings[row.key]}
+                      onValueChange={(v) => void patch({ [row.key]: v as ModelChoice })}
+                    >
+                      <SelectTrigger className="w-56 h-8 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {MODEL_OPTIONS.map((o) => (
+                          <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         ))}
-        <div className="rounded-lg border border-line bg-raised/50 px-3 py-2.5 text-xs text-ink-3 leading-relaxed">
-          Cheaper models burn less of your subscription usage, so chat and scraper tasks default to the fast tiers.
-          The application pipeline is where quality shows (resume tailoring, scoring) — Sonnet or Default is worth it there.
+        <div className="flex items-start gap-3">
+          <div className="flex-1 rounded-lg border border-line bg-raised/50 px-3 py-2.5 text-xs text-ink-3 leading-relaxed">
+            Haiku keeps high-volume triage cheap; Sonnet is worth it where writing quality shows.
+            Default runs on your own Claude Code model — which may be your most expensive one.
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={allRecommended}
+            onClick={() => void patch({ ...RECOMMENDED })}
+          >
+            <RotateCcw className="h-3.5 w-3.5" /> Reset to recommended
+          </Button>
         </div>
       </div>
     </Card>
@@ -516,7 +704,8 @@ function DangerZone() {
 export default function SettingsView() {
   return (
     <div className="space-y-4 max-w-4xl">
-      <PageHeader title="Settings" subtitle="Gates, cadence, models — and the big red button" />
+      <PageHeader title="Settings" subtitle="Market, gates, cadence, models — and the big red button" />
+      <JobMarketCard />
       <GateCard />
       <AutoAdvanceCard />
       <AutomationCard />

@@ -59,8 +59,8 @@ describe('dashboard round: models, setup chat, ask continuity, triggers', () => 
     expect(world.mockAgent.calls[2]!.sessionId).toBeUndefined();
   });
 
-  it('model settings PATCH re-routes call sites (ask → opus, pipeline → default)', async () => {
-    await request(app).patch('/api/settings').send({ modelAsk: 'opus', modelPipeline: 'default' }).expect(200);
+  it('model settings PATCH re-routes call sites (ask → opus, score → default)', async () => {
+    await request(app).patch('/api/settings').send({ modelAsk: 'opus', modelScore: 'default' }).expect(200);
 
     await request(app).post('/api/ask').send({ prompt: 'which model?' }).expect(200);
     await world.runner.drain();
@@ -76,8 +76,9 @@ describe('dashboard round: models, setup chat, ask continuity, triggers', () => 
     const scoreCall = world.mockAgent.calls.find((c) => c.prompt.includes('fit-evaluation engine'))!;
     expect(scoreCall.model).toBe('default');
 
-    // Invalid model value is rejected.
+    // Invalid model value is rejected — and so is the removed legacy key.
     await request(app).patch('/api/settings').send({ modelAsk: 'gpt-4' }).expect(400);
+    await request(app).patch('/api/settings').send({ modelPipeline: 'sonnet' }).expect(400);
   });
 
   it('setup start → message → clear: session persists, prompts stay hygienic, deltas stream', async () => {
@@ -149,7 +150,7 @@ describe('dashboard round: models, setup chat, ask continuity, triggers', () => 
     await world.runner.drain();
     const call = world.mockAgent.calls.find((c) => c.prompt.includes('search-queries.md'))!;
     expect(call).toBeTruthy();
-    expect(call.model).toBe('sonnet'); // modelScraper default
+    expect(call.model).toBe('haiku'); // modelScraper default
     expect(call.prompt).toContain('ONLY that file');
   });
 

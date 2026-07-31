@@ -6,6 +6,7 @@ import { jobs } from '../db/schema';
 import { toJob } from '../db/serialize';
 import { dedupeKey, upsertJob } from '../sources/dedupe';
 import { fetchJobDetailFromPortal, fetchJobDetailViaAgent } from '../sources/enrich';
+import { PRIORITY } from '../queue/queue';
 import type { AppContext } from '../context';
 import { ApiError, idParam, parseBody, parseQuery } from './util';
 
@@ -21,6 +22,30 @@ const listQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });
+
+/** Salary midpoint: (min+max)/2, or whichever single bound exists. */
+export function salaryMid(job: { salaryMin: number | null; salaryMax: number | null }): number | null {
+  if (job.salaryMin != null && job.salaryMax != null) return (job.salaryMin + job.salaryMax) / 2;
+  return job.salaryMax ?? job.salaryMin;
+}
+
+/**
+ * Expected-value rank (FR-17): salaryMid × (fitScore/100)^1.5, discounted
+ * ×0.85 for predicted (not posted) salaries. Null when the job is unscored
+ * or has no salary — unscored jobs rank below every scored one.
+ */
+export function opportunityScore(job: {
+  salaryMin: number | null;
+  salaryMax: number | null;
+  salaryPredicted: number | boolean;
+  fitScore: number | null;
+}): number | null {
+  const mid = salaryMid(job);
+  if (mid == null || job.fitScore == null) return null;
+  const predicted = typeof job.salaryPredicted === 'number' ? job.salaryPredicted === 1 : job.salaryPredicted;
+  const ev = mid * Math.pow(Math.max(0, Math.min(100, job.fitScore)) / 100, 1.5);
+  return Math.round(ev * (predicted ? 0.85 : 1));
+}
 
 const createJobSchema = z.object({
   company: z.string().min(1),
@@ -71,29 +96,47 @@ export function jobRoutes(ctx: AppContext): Router {
     res.json({ total, jobs: rows.map(toJob) });
   });
 
-  // FR-17: top opportunities by salary, optionally fit-weighted.
+  // FR-17: top opportunities. Default ranking is expected value — salary
+  // weighted by the realistic chance of getting the job:
+  //   opportunityScore = salaryMid × (fitScore/100)^1.5   (×0.85 when the
+  //   salary is predicted, not posted). salaryMid = (min+max)/2 or the single
+  //   bound. Unscored jobs rank below every scored job (salary desc among
+  //   themselves). by=salary keeps the raw ranking (fitWeighted supported).
   router.get('/jobs/top', (req, res) => {
     const q = parseQuery(
       z.object({
-        by: z.enum(['salary']).default('salary'),
+        by: z.enum(['opportunity', 'salary']).default('opportunity'),
         fitWeighted: z.enum(['true', 'false']).default('false'),
         limit: z.coerce.number().int().min(1).max(50).default(10),
       }),
       req,
     );
-    const salaryExpr = sql<number>`COALESCE(${jobs.salaryMax}, ${jobs.salaryMin}, 0)`;
-    const rank =
-      q.fitWeighted === 'true'
-        ? sql<number>`${salaryExpr} * (COALESCE(${jobs.fitScore}, 50) / 100.0)`
-        : salaryExpr;
     const rows = ctx.db
       .select()
       .from(jobs)
-      .where(sql`COALESCE(${jobs.salaryMax}, ${jobs.salaryMin}) IS NOT NULL AND ${jobs.status} NOT IN ('quarantined','skipped','rejected')`)
-      .orderBy(desc(rank))
-      .limit(q.limit)
+      .where(
+        sql`COALESCE(${jobs.salaryMax}, ${jobs.salaryMin}) IS NOT NULL
+            AND ${jobs.status} NOT IN ('quarantined','skipped','rejected')
+            AND ${jobs.legitVerdict} NOT IN ('suspicious','scam')`,
+      )
       .all();
-    res.json(rows.map(toJob));
+
+    const withEv = rows.map((row) => ({ row, ev: opportunityScore(row) }));
+    if (q.by === 'opportunity') {
+      withEv.sort((a, b) => {
+        if (a.ev != null && b.ev != null) return b.ev - a.ev;
+        if (a.ev != null) return -1; // scored jobs above all unscored
+        if (b.ev != null) return 1;
+        return salaryMid(b.row)! - salaryMid(a.row)!; // unscored fallback: salary desc
+      });
+    } else {
+      const rank = (r: (typeof rows)[number]) => {
+        const salary = r.salaryMax ?? r.salaryMin ?? 0;
+        return q.fitWeighted === 'true' ? salary * ((r.fitScore ?? 50) / 100) : salary;
+      };
+      withEv.sort((a, b) => rank(b.row) - rank(a.row));
+    }
+    res.json(withEv.slice(0, q.limit).map(({ row, ev }) => ({ ...toJob(row), opportunityScore: ev })));
   });
 
   router.get('/jobs/:id', (req, res) => {
@@ -149,9 +192,10 @@ export function jobRoutes(ctx: AppContext): Router {
       raw: { pastedUrl: body.url },
     });
     ctx.bus.emit({ type: 'job.discovered', job: toJob(job) });
-    // The score worker (pipeline phase: fetch + parse first) picks it up from here.
-    const task = ctx.queue.enqueue('score', { payload: { jobId: job.id, fetchUrl: body.url } });
-    res.status(201).json({ job: toJob(job), taskId: task.id });
+    // The score worker (pipeline phase: fetch + parse first) picks it up from
+    // here — user-initiated, so it jumps the bulk-scoring backlog.
+    const task = ctx.queue.enqueue('score', { priority: PRIORITY.user, payload: { jobId: job.id, fetchUrl: body.url } });
+    res.status(201).json({ job: toJob(job), taskId: task.id, queuePosition: ctx.queue.positionOf(task.id) });
   });
 
   router.post('/jobs/:id/apply', (req, res) => {
@@ -161,8 +205,9 @@ export function jobRoutes(ctx: AppContext): Router {
     if (row.legitVerdict === 'scam') {
       throw new ApiError(409, 'quarantined', 'This job is quarantined as a scam and cannot enter the apply pipeline');
     }
-    const task = ctx.queue.enqueue('tailor', { payload: { jobId: id } });
-    res.json({ taskId: task.id });
+    // User-clicked → priority 10: claims ahead of the bulk score backlog.
+    const task = ctx.queue.enqueue('tailor', { priority: PRIORITY.user, payload: { jobId: id } });
+    res.json({ taskId: task.id, queuePosition: ctx.queue.positionOf(task.id) });
   });
 
   // On-demand description backfill: portal `detail` first, then an agent
@@ -229,7 +274,7 @@ export function jobRoutes(ctx: AppContext): Router {
       .get();
     let taskId: number | null = null;
     if (row.fitScore == null) {
-      taskId = ctx.queue.enqueue('score', { payload: { jobId: id, rescore: true } }).id;
+      taskId = ctx.queue.enqueue('score', { priority: PRIORITY.user, payload: { jobId: id, rescore: true } }).id;
     }
     ctx.bus.emit({ type: 'job.scored', job: toJob(row) });
     res.json({ job: toJob(row), taskId });

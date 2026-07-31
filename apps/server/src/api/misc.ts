@@ -5,6 +5,8 @@ import { desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { feedback } from '../db/schema';
 import { toFeedbackEntry } from '../db/serialize';
+import { backfillAutoAdvance } from '../queue/recovery';
+import { PRIORITY } from '../queue/queue';
 import type { AppContext } from '../context';
 import { ApiError, idParam, parseBody } from './util';
 
@@ -24,9 +26,15 @@ const settingsPatchSchema = z
     modelAsk: modelChoiceSchema,
     modelSetup: modelChoiceSchema,
     modelScraper: modelChoiceSchema,
-    modelPipeline: modelChoiceSchema,
+    modelScore: modelChoiceSchema,
+    modelTailor: modelChoiceSchema,
+    modelPrep: modelChoiceSchema,
+    modelEmail: modelChoiceSchema,
+    modelFollowup: modelChoiceSchema,
+    modelFeedback: modelChoiceSchema,
     autoAdvance: z.enum(['off', 'threshold', 'all']),
     autoAdvanceThreshold: z.number().int().min(0).max(100),
+    queueConcurrency: z.number().int().min(1).max(4),
   })
   .partial()
   .strict();
@@ -47,7 +55,7 @@ export function miscRoutes(ctx: AppContext): Router {
       .values({ kind: body.kind, inputMd: body.text, createdAt: new Date().toISOString() })
       .returning()
       .get();
-    ctx.queue.enqueue('feedback', { payload: { feedbackId: row.id } });
+    ctx.queue.enqueue('feedback', { priority: PRIORITY.user, payload: { feedbackId: row.id } });
     res.status(201).json(toFeedbackEntry(row));
   });
 
@@ -100,7 +108,7 @@ export function miscRoutes(ctx: AppContext): Router {
   router.post('/ask', (req, res) => {
     const body = parseBody(z.object({ prompt: z.string().min(1), sessionId: z.string().optional() }), req);
     const requestId = crypto.randomUUID();
-    ctx.queue.enqueue('ask', { payload: { requestId, prompt: body.prompt, sessionId: body.sessionId } });
+    ctx.queue.enqueue('ask', { priority: PRIORITY.user, payload: { requestId, prompt: body.prompt, sessionId: body.sessionId } });
     res.json({ requestId });
   });
 
@@ -119,6 +127,11 @@ export function miscRoutes(ctx: AppContext): Router {
     const settings = ctx.settings.patch(patch);
     if (patch.discoveryIntervalMinutes != null || patch.emailScanIntervalMinutes != null) {
       ctx.scheduler.reschedule();
+    }
+    // A loosened auto-advance gate makes previously-scored jobs newly eligible
+    // — retro-advance them right away instead of waiting for the next sweep.
+    if (patch.autoAdvance != null || patch.autoAdvanceThreshold != null) {
+      backfillAutoAdvance(ctx);
     }
     res.json(settings);
   });

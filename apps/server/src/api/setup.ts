@@ -6,6 +6,7 @@
 import crypto from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
+import { PRIORITY } from '../queue/queue';
 import type { AppContext } from '../context';
 import { ApiError, parseBody } from './util';
 
@@ -19,7 +20,7 @@ export function setupRoutes(ctx: AppContext): Router {
     const requestId = crypto.randomUUID();
     ctx.settings.setInternal('setupSessionId', null);
     ctx.settings.setInternal('setupMode', body.mode);
-    ctx.queue.enqueue('setup', { payload: { requestId, phase: 'start', mode: body.mode } });
+    ctx.queue.enqueue('setup', { priority: PRIORITY.user, payload: { requestId, phase: 'start', mode: body.mode } });
     res.json({ requestId });
   });
 
@@ -31,7 +32,7 @@ export function setupRoutes(ctx: AppContext): Router {
       throw new ApiError(409, 'invalid_state', 'No active setup session — call POST /api/setup/start first');
     }
     const requestId = crypto.randomUUID();
-    ctx.queue.enqueue('setup', { payload: { requestId, phase: 'message', text: body.text } });
+    ctx.queue.enqueue('setup', { priority: PRIORITY.user, payload: { requestId, phase: 'message', text: body.text } });
     res.json({ requestId });
   });
 

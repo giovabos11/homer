@@ -138,7 +138,7 @@ async function draftWithReview(ctx: AppContext, job: JobRow, appId: number): Pro
     {
       prompt: buildDrafterPrompt(ctx, job),
       cwd: ctx.repoRoot,
-      model: ctx.settings.get().modelPipeline,
+      model: ctx.settings.get().modelTailor,
       timeoutMs: ctx.config.agent.defaultTimeoutMs,
     },
     tailorDraftSchema,
@@ -151,7 +151,7 @@ async function draftWithReview(ctx: AppContext, job: JobRow, appId: number): Pro
     const reviewed = await ctx.runner.run({
       prompt: buildReviewerPrompt(ctx, job, draft),
       cwd: ctx.repoRoot,
-      model: ctx.settings.get().modelPipeline,
+      model: ctx.settings.get().modelTailor,
       timeoutMs: ctx.config.agent.defaultTimeoutMs,
     });
     const review = reviewSchema.safeParse(reviewed.structured);

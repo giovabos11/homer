@@ -73,10 +73,10 @@ export interface Api {
   // jobs
   getJobs(params?: JobsQuery): Promise<{ total: number; jobs: Job[] }>;
   getJob(id: number): Promise<Job>;
-  getTopJobs(fitWeighted: boolean, limit?: number): Promise<Job[]>;
+  getTopJobs(by: 'opportunity' | 'salary', limit?: number): Promise<Job[]>;
   createJob(body: Partial<Job>): Promise<Job>;
-  applyFromUrl(url: string): Promise<{ job: Job; taskId: number }>;
-  applyJob(id: number): Promise<{ taskId: number }>;
+  applyFromUrl(url: string): Promise<{ job: Job; taskId: number; queuePosition?: number }>;
+  applyJob(id: number): Promise<{ taskId: number; queuePosition?: number }>;
   fetchJobDetails(id: number): Promise<{ job: Job }>;
   skipJob(id: number): Promise<Job>;
   overrideLegit(id: number, note: string): Promise<{ job: Job; taskId: number | null }>;

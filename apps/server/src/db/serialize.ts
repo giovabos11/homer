@@ -112,6 +112,7 @@ export function toQueueTask(row: TaskRow): QueueTask {
     state: row.state as QueueTask['state'],
     payload: parseJson<Record<string, unknown>>(row.payloadJson, {}),
     cursor: parseJson<Record<string, unknown> | null>(row.cursorJson, null),
+    priority: row.priority,
     runAfter: row.runAfter,
     attempts: row.attempts,
     lastError: row.lastError,

@@ -17,7 +17,12 @@ export interface EnqueueOptions {
   /** Skip enqueue when an identical-type task is already pending/running. */
   dedupe?: boolean;
   cursor?: Record<string, unknown> | null;
+  /** Claim order: higher first, FIFO within a band (10 user, 5 auto-advance, 0 bulk). */
+  priority?: number;
 }
+
+/** Enqueue priority bands (PRD §11). */
+export const PRIORITY = { user: 10, autoAdvance: 5, bulk: 0 } as const;
 
 const ACTIVE_STATES: TaskState[] = ['pending', 'running', 'paused', 'needs_human', 'waiting_session'];
 
@@ -56,6 +61,7 @@ export class TaskQueue {
         payloadJson: JSON.stringify(options.payload ?? {}),
         state: 'pending',
         cursorJson: options.cursor ? JSON.stringify(options.cursor) : null,
+        priority: options.priority ?? 0,
         runAfter: options.runAfter ? options.runAfter.toISOString() : null,
         createdAt: now,
         updatedAt: now,
@@ -66,25 +72,51 @@ export class TaskQueue {
   }
 
   /**
-   * Atomically claim the next runnable pending task (FIFO, run_after respected).
-   * Returns null when the queue is paused or nothing is runnable.
+   * Atomically claim the next runnable pending task (priority DESC, then FIFO;
+   * run_after respected). `types` restricts the claim to those task types —
+   * how the runner keeps its concurrency lanes (agent pool vs. serialized
+   * apply/discover) apart. Returns null when the queue is paused or nothing
+   * claimable matches.
    */
-  claim(): TaskRow | null {
+  claim(types?: TaskType[]): TaskRow | null {
     if (this.isPaused()) return null;
+    if (types && types.length === 0) return null;
     const now = this.nowIso();
+    // types come from the closed TaskType enum (runner lane constants), so
+    // inlining them as quoted literals is safe and keeps the binding simple.
+    const typeFilter = types ? `AND type IN (${types.map((t) => `'${t.replace(/'/g, "''")}'`).join(',')})` : '';
     const row = this.sqlite
       .prepare(
         `UPDATE task_queue SET state='running', updated_at=@now
          WHERE id = (
            SELECT id FROM task_queue
            WHERE state='pending' AND (run_after IS NULL OR run_after <= @now)
-           ORDER BY id LIMIT 1
+           ${typeFilter}
+           ORDER BY priority DESC, id LIMIT 1
          ) AND state='pending'
          RETURNING *`,
       )
       .get({ now }) as Record<string, unknown> | undefined;
     if (!row) return null;
     return this.get(row.id as number);
+  }
+
+  /**
+   * Approximate queue position: how many running + claim-ordered-earlier
+   * pending tasks stand between this task and execution. 0 = next up.
+   */
+  positionOf(id: number): number {
+    const task = this.get(id);
+    if (!task || task.state !== 'pending') return 0;
+    const row = this.sqlite
+      .prepare(
+        `SELECT count(*) AS n FROM task_queue
+         WHERE state='running'
+            OR (state='pending' AND id <> @id
+                AND (priority > @priority OR (priority = @priority AND id < @id)))`,
+      )
+      .get({ id: task.id, priority: task.priority }) as { n: number };
+    return row.n;
   }
 
   get(id: number): TaskRow | null {

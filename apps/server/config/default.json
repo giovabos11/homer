@@ -13,10 +13,16 @@
     "maxFollowups": 2,
     "modelAsk": "haiku",
     "modelSetup": "sonnet",
-    "modelScraper": "sonnet",
-    "modelPipeline": "sonnet",
+    "modelScraper": "haiku",
+    "modelScore": "haiku",
+    "modelTailor": "sonnet",
+    "modelPrep": "sonnet",
+    "modelEmail": "haiku",
+    "modelFollowup": "sonnet",
+    "modelFeedback": "sonnet",
     "autoAdvance": "threshold",
-    "autoAdvanceThreshold": 70
+    "autoAdvanceThreshold": 70,
+    "queueConcurrency": 2
   },
   "queue": {
     "maxAttempts": 5,

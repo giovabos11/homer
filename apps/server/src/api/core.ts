@@ -5,6 +5,7 @@ import path from 'node:path';
 import { Router } from 'express';
 import { z } from 'zod';
 import type { UserProfile } from '@shared/types';
+import { PRIORITY } from '../queue/queue';
 import type { AppContext } from '../context';
 import { safeJoin } from '../util/paths';
 import { ApiError, parseBody } from './util';
@@ -161,7 +162,7 @@ export function coreRoutes(ctx: AppContext): Router {
   // (regen_queries worker, modelScraper). Deduped like discovery.
   router.post('/profile/regenerate-queries', (_req, res) => {
     const requestId = crypto.randomUUID();
-    ctx.queue.enqueue('regen_queries', { dedupe: true, payload: { requestId } });
+    ctx.queue.enqueue('regen_queries', { dedupe: true, priority: PRIORITY.user, payload: { requestId } });
     res.json({ requestId });
   });
 

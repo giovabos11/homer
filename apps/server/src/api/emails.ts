@@ -4,6 +4,7 @@ import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { emails } from '../db/schema';
 import { toEmail } from '../db/serialize';
+import { PRIORITY } from '../queue/queue';
 import type { AppContext } from '../context';
 import { ApiError, idParam, parseBody, parseQuery } from './util';
 
@@ -62,7 +63,7 @@ export function emailRoutes(ctx: AppContext): Router {
       .where(eq(emails.id, id))
       .returning()
       .get();
-    ctx.queue.enqueue('email_send', { payload: { emailId: id } });
+    ctx.queue.enqueue('email_send', { priority: PRIORITY.user, payload: { emailId: id } });
     const dto = toEmail(row);
     ctx.bus.emit({ type: 'outbox.updated', email: dto });
     res.json(dto);
@@ -90,7 +91,7 @@ export function emailRoutes(ctx: AppContext): Router {
 
   // Manual trigger of the periodic scan (FR-2).
   router.post('/emails/scan', (_req, res) => {
-    const task = ctx.queue.enqueue('email_scan', { dedupe: true, payload: { trigger: 'manual' } });
+    const task = ctx.queue.enqueue('email_scan', { dedupe: true, priority: PRIORITY.user, payload: { trigger: 'manual' } });
     res.json({ taskId: task.id });
   });
 

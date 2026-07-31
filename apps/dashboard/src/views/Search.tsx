@@ -186,6 +186,7 @@ function LiveResults() {
 function UrlApply() {
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
+  const pushToast = useStore((s) => s.pushToast);
   return (
     <Card>
       <CardHeader title="Paste a URL, get an application" hint="Any posting URL — parsed, scored, then tailored under your gate" />
@@ -196,7 +197,14 @@ function UrlApply() {
           if (!/^https?:\/\//i.test(url) || busy) return;
           setBusy(true);
           try {
-            await api.applyFromUrl(url.trim());
+            const res = await api.applyFromUrl(url.trim());
+            const n = res.queuePosition ?? 0;
+            pushToast(
+              'info',
+              n > 0
+                ? `Queued — starts after ${n} running/queued task${n === 1 ? '' : 's'}`
+                : 'Queued — starting now',
+            );
             setUrl('');
           } finally {
             setBusy(false);

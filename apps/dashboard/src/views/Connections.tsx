@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import {
-  Bot, CheckCircle2, Chrome, Eye, EyeOff, Globe2, Info, KeyRound, Loader2, Mail,
-  MonitorSmartphone, Plug, Plus, RefreshCw, Server, ShieldAlert, Trash2, UserRound, Vault, Zap,
+  Bot, CheckCircle2, Chrome, Eye, EyeOff, Info, KeyRound, Loader2, Mail,
+  MonitorSmartphone, Plug, Plus, RefreshCw, Server, ShieldAlert, Trash2, Vault, Zap,
 } from 'lucide-react';
 import type { Connection, ConnectionName } from '@shared';
 import { api } from '@/api/client';
@@ -13,7 +13,6 @@ import { Card, CardHeader, EmptyState, PageHeader } from '@/components/common/la
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox, Tip } from '@/components/ui/controls';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { CONN_STATUS, ConnDot, sourceLabel } from '@/components/common/chips';
@@ -25,31 +24,6 @@ const CONN_LABEL: Partial<Record<ConnectionName, { label: string; icon: typeof S
   playwright: { label: 'Playwright browser', icon: MonitorSmartphone },
   chrome: { label: 'Claude in Chrome', icon: Chrome },
 };
-
-const COUNTRIES: { code: string; name: string; note?: string }[] = [
-  { code: 'US', name: 'United States', note: 'full portal set' },
-  { code: 'DK', name: 'Denmark', note: 'upstream portals' },
-  { code: 'GB', name: 'United Kingdom', note: 'via /add-portal' },
-  { code: 'CA', name: 'Canada', note: 'via /add-portal' },
-  { code: 'DE', name: 'Germany', note: 'via /add-portal' },
-  { code: 'ES', name: 'Spain', note: 'via /add-portal' },
-  { code: 'MX', name: 'Mexico', note: 'via /add-portal' },
-];
-
-function CountryFlag({ code, name, width = 20 }: { code: string; name: string; width?: number }) {
-  const iso = code.toLowerCase();
-  return (
-    <img
-      src={`https://flagcdn.com/w40/${iso}.png`}
-      srcSet={`https://flagcdn.com/w80/${iso}.png 2x`}
-      width={width}
-      alt={name}
-      loading="lazy"
-      className="rounded-[3px] shrink-0 border border-line/60"
-      style={{ height: 'auto' }}
-    />
-  );
-}
 
 /* ------------------------------ Key entry modal ------------------------------ */
 function KeyModal({ conn, open, onOpenChange }: { conn: Connection; open: boolean; onOpenChange: (v: boolean) => void }) {
@@ -220,66 +194,6 @@ function ConnCard({ conn, index }: { conn: Connection; index: number }) {
   );
 }
 
-/* -------------------------------- Job market card -------------------------------- */
-function JobMarketCard() {
-  const profile = useStore((s) => s.profile);
-  const settings = useStore((s) => s.settings);
-  const setSettings = useStore((s) => s.setSettings);
-  const country = settings?.country ?? profile?.country ?? 'US';
-
-  return (
-    <Card>
-      <CardHeader
-        title={
-          <span className="inline-flex items-center gap-1.5">
-            <Globe2 className="h-4 w-4 text-accent" /> Job market
-          </span>
-        }
-        hint="Which country's portal set discovery targets"
-        right={
-          <Select
-            value={country}
-            onValueChange={async (v) => {
-              const s = await api.patchSettings({ country: v });
-              setSettings(s);
-            }}
-          >
-            <SelectTrigger className="w-40">
-              <SelectValue>
-                <span className="inline-flex items-center gap-1.5">
-                  {COUNTRIES.some((c) => c.code === country) ? (
-                    <CountryFlag code={country} name={COUNTRIES.find((c) => c.code === country)!.name} />
-                  ) : (
-                    <Globe2 className="h-4 w-4 text-ink-3" />
-                  )}
-                  <span>{COUNTRIES.find((c) => c.code === country)?.name ?? country}</span>
-                </span>
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {COUNTRIES.map((c) => (
-                <SelectItem key={c.code} value={c.code}>
-                  <span className="inline-flex items-center gap-2">
-                    <CountryFlag code={c.code} name={c.name} /> {c.name}
-                    {c.note && <span className="text-[10px] text-ink-3">({c.note})</span>}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        }
-      />
-      <div className="px-4 pb-4">
-        <p className="text-[11px] text-ink-3 flex items-start gap-1.5 leading-relaxed">
-          <UserRound className="h-3.5 w-3.5 shrink-0 mt-px" />
-          Identity, documents, and profile files moved — click your name at the bottom of the sidebar to view and edit
-          them.
-        </p>
-      </div>
-    </Card>
-  );
-}
-
 /* -------------------------------- Credentials vault -------------------------------- */
 function VaultCard() {
   const [list, setList] = useState<Awaited<ReturnType<typeof api.getCredentials>> | null>(null);
@@ -434,35 +348,38 @@ function VaultCard() {
 }
 
 /* ------------------------------------- View ------------------------------------- */
+/** Cards that carry a walkthrough block are much taller — keep them together on
+ *  the last row so the short status cards don't sit above a grid-sized void. */
+const GUIDED = new Set<ConnectionName>(['gmail', 'chrome']);
+
 export default function Connections() {
   const connections = useStore((s) => s.connections);
-  const core = connections.filter((c) => CONN_LABEL[c.name]);
+  const core = connections
+    .filter((c) => CONN_LABEL[c.name])
+    .sort((a, b) => Number(GUIDED.has(a.name)) - Number(GUIDED.has(b.name)));
   const portals = connections.filter((c) => !CONN_LABEL[c.name]);
 
   return (
     <div className="space-y-4">
       <PageHeader title="Connections" subtitle="Every integration at a glance — sessions, browsers, portals, and optional free keys" />
-      <div className="grid grid-cols-[1.5fr_1fr] gap-4 max-[1420px]:grid-cols-1 items-start">
-        <div className="space-y-4">
-          <div>
-            <p className="text-xs font-semibold text-ink-3 uppercase tracking-wide mb-2 px-1">Core services</p>
-            <div className="grid grid-cols-3 gap-3 max-[1500px]:grid-cols-2">
-              {core.map((c, i) => (
-                <ConnCard key={c.name} conn={c} index={i} />
-              ))}
-            </div>
+      <div className="space-y-4">
+        <div>
+          <p className="text-xs font-semibold text-ink-3 uppercase tracking-wide mb-2 px-1">Core services</p>
+          <div className="grid grid-cols-3 gap-3 items-start max-[1180px]:grid-cols-2">
+            {core.map((c, i) => (
+              <ConnCard key={c.name} conn={c} index={i} />
+            ))}
           </div>
-          <div>
-            <p className="text-xs font-semibold text-ink-3 uppercase tracking-wide mb-2 px-1">Job sources</p>
-            <div className="grid grid-cols-3 gap-3 max-[1500px]:grid-cols-2">
-              {portals.map((c, i) => (
-                <ConnCard key={c.name} conn={c} index={i + core.length} />
-              ))}
-            </div>
-          </div>
-          <VaultCard />
         </div>
-        <JobMarketCard />
+        <div>
+          <p className="text-xs font-semibold text-ink-3 uppercase tracking-wide mb-2 px-1">Job sources</p>
+          <div className="grid grid-cols-4 gap-3 items-start max-[1400px]:grid-cols-3 max-[1120px]:grid-cols-2">
+            {portals.map((c, i) => (
+              <ConnCard key={c.name} conn={c} index={i + core.length} />
+            ))}
+          </div>
+        </div>
+        <VaultCard />
       </div>
     </div>
   );

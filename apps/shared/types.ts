@@ -46,6 +46,9 @@ export interface Job {
   legitVerdict: LegitVerdict;
   legitReasons: string[];
   managed: 'auto' | 'manual';
+  /** Expected-value rank: salaryMid × (fitScore/100)^1.5 (×0.85 when the salary
+   *  is predicted). Only populated by GET /api/jobs/top; null when unscored. */
+  opportunityScore?: number | null;
 }
 
 export interface Application {
@@ -69,6 +72,9 @@ export interface QueueTask {
   state: TaskState;
   payload: Record<string, unknown>;
   cursor: Record<string, unknown> | null;  // resume point (source, page, item index)
+  /** Claim order: higher first, FIFO within a priority. 10 = user-initiated,
+   *  5 = auto-advance, 0 = bulk/background. */
+  priority: number;
   runAfter: string | null;
   attempts: number;
   lastError: string | null;
@@ -176,14 +182,24 @@ export interface Settings {
   maxFollowups: number;
   /** Per-task model routing — cheaper models burn less subscription usage.
    *  'default' (the user's own Claude Code model, possibly Opus) is selectable
-   *  but is no task's default. */
+   *  but is no task's default. Haiku for high-volume triage, Sonnet where
+   *  writing quality matters. (modelPipeline was split into the six granular
+   *  keys below; a legacy modelPipeline settings row seeds all six once.) */
   modelAsk: ModelChoice;        // ask-anything chat (default 'haiku')
   modelSetup: ModelChoice;      // dashboard profile setup sessions (default 'sonnet')
-  modelScraper: ModelChoice;    // search-queries regeneration (default 'sonnet')
-  modelPipeline: ModelChoice;   // score / tailor / prep / email / feedback / followup workers (default 'sonnet')
+  modelScraper: ModelChoice;    // search-queries regeneration (default 'haiku')
+  modelScore: ModelChoice;      // fit scoring + legitimacy verification (default 'haiku')
+  modelTailor: ModelChoice;     // resume/cover drafter AND reviewer (default 'sonnet')
+  modelPrep: ModelChoice;       // interview prep guides (default 'sonnet')
+  modelEmail: ModelChoice;      // email scan + send drafting (default 'haiku')
+  modelFollowup: ModelChoice;   // follow-up email drafting (default 'sonnet')
+  modelFeedback: ModelChoice;   // feedback / retro analysis (default 'sonnet')
   /** Auto-advance screened jobs into the tailor pipeline (FR-9). */
   autoAdvance: 'off' | 'threshold' | 'all';   // default 'threshold'
   autoAdvanceThreshold: number;               // fit score gate for 'threshold' mode (default 70)
+  /** Max agent-bound tasks the queue runner keeps in flight at once (1-4).
+   *  apply and discover are always serialized outside this pool. */
+  queueConcurrency: number;                   // default 2
 }
 
 /** Next scheduled sweep times (ISO) — part of the queue snapshot. */

@@ -16,19 +16,30 @@ export function DialogContent({
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className="dialog-overlay fixed inset-0 z-50 bg-black/55 backdrop-blur-[2px]" />
-      <DialogPrimitive.Content
-        className={cn(
-          'dialog-content fixed left-1/2 top-1/2 z-50 w-full -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface p-5 shadow-[var(--shadow-pop)] focus:outline-none max-h-[85vh] overflow-y-auto',
-          wide ? 'max-w-3xl' : 'max-w-md',
-          className,
-        )}
-        {...props}
-      >
-        {children}
-        <DialogPrimitive.Close className="absolute right-3.5 top-3.5 rounded-md p-1 text-ink-3 hover:bg-overlay hover:text-ink cursor-pointer">
-          <X className="h-4 w-4" />
-        </DialogPrimitive.Close>
-      </DialogPrimitive.Content>
+      {/*
+        Centering happens on this static layer, never on the animated element.
+        Previously the content centered itself with `-translate-x/y-1/2` (which
+        Tailwind v4 emits as the `translate` property) while the open keyframe
+        also animated `transform: translate(-50%,-50%)` — the two stacked, so
+        the first painted frame landed a full panel up-and-left of centre and
+        the modal visibly jumped into place when the animation ended. The inner
+        panel now animates opacity + scale only.
+      */}
+      <div className="fixed inset-0 z-50 grid place-items-center p-4 pointer-events-none">
+        <DialogPrimitive.Content
+          className={cn(
+            'dialog-content pointer-events-auto relative w-full rounded-xl border border-line bg-surface p-5 shadow-[var(--shadow-pop)] focus:outline-none max-h-[85vh] overflow-y-auto',
+            wide ? 'max-w-3xl' : 'max-w-md',
+            className,
+          )}
+          {...props}
+        >
+          {children}
+          <DialogPrimitive.Close className="absolute right-3.5 top-3.5 rounded-md p-1 text-ink-3 hover:bg-overlay hover:text-ink cursor-pointer">
+            <X className="h-4 w-4" />
+          </DialogPrimitive.Close>
+        </DialogPrimitive.Content>
+      </div>
     </DialogPrimitive.Portal>
   );
 }

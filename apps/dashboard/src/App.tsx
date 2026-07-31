@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { HashRouter, NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { HashRouter, Link, Navigate, Route, Routes, useMatch } from 'react-router-dom';
 import { motion } from 'motion/react';
 import {
   CalendarDays, ChevronsLeft, ChevronsRight, FlaskConical, Gem, Inbox as InboxIcon,
@@ -88,9 +88,94 @@ function ProfileChip({ collapsed }: { collapsed: boolean }) {
 
   return (
     <>
-      {collapsed ? <Tip label={name}>{chip}</Tip> : chip}
+      {collapsed ? (
+        <Tip label={name} side="right" sideOffset={RAIL_TIP_OFFSET}>
+          {chip}
+        </Tip>
+      ) : (
+        chip
+      )}
       <ProfileModal open={open} onOpenChange={setOpen} />
     </>
+  );
+}
+
+/*
+ * Collapsed-rail tooltips are offset from their trigger, not from the rail, so
+ * the two trigger widths need different values to land on the same vertical
+ * line ~8px clear of the rail's edge.
+ */
+/** Full-width rail rows: nav links, profile chip, live-status row. */
+const RAIL_TIP_OFFSET = 16;
+/** 28px icon buttons (theme, collapse) sit inset from the rail edge. */
+const RAIL_ICON_TIP_OFFSET = 25;
+
+type NavEntry = {
+  to: string;
+  icon: typeof LayoutDashboard;
+  label: string;
+  badge: number;
+  badgeTone?: 'warn';
+  exact?: boolean;
+};
+
+/**
+ * One rail entry. Active state comes from `useMatch` rather than `NavLink`'s
+ * render-prop className: the collapsed rail wraps this in a Radix tooltip
+ * trigger (`asChild`), which merges props onto the child and would stringify a
+ * function className into the class attribute, stripping every utility class.
+ */
+function NavItem({ item, collapsed }: { item: NavEntry; collapsed: boolean }) {
+  const Icon = item.icon;
+  const isActive = useMatch({ path: item.to, end: item.exact ?? false }) != null;
+
+  const link = (
+    <Link
+      to={item.to}
+      aria-label={item.label}
+      className={cn(
+        'relative flex items-center rounded-lg py-2 text-[13px] font-medium transition-colors',
+        collapsed ? 'justify-center px-0' : 'gap-2.5 px-2.5',
+        isActive ? 'bg-accent/12 text-accent' : 'text-ink-3 hover:text-ink hover:bg-overlay',
+      )}
+    >
+      <span className="relative shrink-0">
+        <Icon className="h-4.5 w-4.5" />
+        {collapsed && item.badge > 0 && (
+          <span
+            className={cn(
+              'absolute -top-1 -right-1.5 h-3.5 min-w-3.5 rounded-full text-[9px] font-bold text-white flex items-center justify-center px-0.5',
+              item.badgeTone === 'warn' ? 'bg-warn-raw text-black' : 'bg-accent',
+            )}
+          >
+            {item.badge}
+          </span>
+        )}
+      </span>
+      {!collapsed && (
+        <>
+          <span className="truncate">{item.label}</span>
+          {item.badge > 0 && (
+            <span
+              className={cn(
+                'ml-auto rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular',
+                item.badgeTone === 'warn' ? 'bg-warn-raw/15 text-warn' : 'bg-accent/15 text-accent',
+              )}
+            >
+              {item.badge}
+            </span>
+          )}
+        </>
+      )}
+    </Link>
+  );
+
+  return collapsed ? (
+    <Tip label={item.label} side="right" sideOffset={RAIL_TIP_OFFSET}>
+      {link}
+    </Tip>
+  ) : (
+    link
   );
 }
 
@@ -119,7 +204,7 @@ function Sidebar() {
     });
   };
 
-  const NAV = [
+  const NAV: NavEntry[] = [
     { to: '/', icon: LayoutDashboard, label: 'Mission Control', badge: readyCount, exact: true },
     { to: '/opportunities', icon: Gem, label: 'Opportunities', badge: 0 },
     { to: '/search', icon: SearchIcon, label: 'Search', badge: humanCount, badgeTone: 'warn' as const },
@@ -136,9 +221,14 @@ function Sidebar() {
       transition={{ type: 'spring', stiffness: 400, damping: 36 }}
       className="h-full shrink-0 border-r border-line bg-surface flex flex-col overflow-hidden"
     >
-      <div className={cn('flex items-center gap-2.5 px-3.5 h-14 border-b border-line shrink-0', collapsed && 'justify-center px-0')}>
+      <div
+        className={cn(
+          'flex items-center h-14 border-b border-line shrink-0',
+          collapsed ? 'justify-center px-0' : 'gap-2.5 px-3.5',
+        )}
+      >
         <div className="h-8 w-8 rounded-lg bg-overlay border border-line flex items-center justify-center shrink-0">
-          <img src="/lyre-icon.png" alt="Homer" className="h-6 w-6" />
+          <img src="/lyre-icon.png" alt="Homer" className="h-6 w-6 shrink-0" />
         </div>
         {!collapsed && (
           <div className="min-w-0">
@@ -148,96 +238,84 @@ function Sidebar() {
         )}
       </div>
 
-      <nav className="flex-1 py-2.5 px-2 space-y-0.5 overflow-y-auto">
-        {NAV.map((item) => {
-          const Icon = item.icon;
-          const link = (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.exact}
-              className={({ isActive }) =>
-                cn(
-                  'flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium transition-colors relative',
-                  collapsed && 'justify-center px-0',
-                  isActive ? 'bg-accent/12 text-accent' : 'text-ink-3 hover:text-ink hover:bg-overlay',
-                )
-              }
-            >
-              <span className="relative shrink-0">
-                <Icon className="h-4.5 w-4.5" />
-                {collapsed && item.badge > 0 && (
-                  <span
-                    className={cn(
-                      'absolute -top-1 -right-1.5 h-3.5 min-w-3.5 rounded-full text-[9px] font-bold text-white flex items-center justify-center px-0.5',
-                      item.badgeTone === 'warn' ? 'bg-warn-raw text-black' : 'bg-accent',
-                    )}
-                  >
-                    {item.badge}
-                  </span>
-                )}
-              </span>
-              {!collapsed && (
-                <>
-                  <span className="truncate">{item.label}</span>
-                  {item.badge > 0 && (
-                    <span
-                      className={cn(
-                        'ml-auto rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular',
-                        item.badgeTone === 'warn' ? 'bg-warn-raw/15 text-warn' : 'bg-accent/15 text-accent',
-                      )}
-                    >
-                      {item.badge}
-                    </span>
-                  )}
-                </>
-              )}
-            </NavLink>
-          );
-          return collapsed ? (
-            <Tip key={item.to} label={item.label}>
-              {link}
-            </Tip>
-          ) : (
-            link
-          );
-        })}
+      <nav className="flex-1 py-2.5 px-2 space-y-0.5 overflow-y-auto overflow-x-hidden">
+        {NAV.map((item) => (
+          <NavItem key={item.to} item={item} collapsed={collapsed} />
+        ))}
       </nav>
 
-      <div className={cn('px-2 pb-3 space-y-1 shrink-0', collapsed && 'px-1.5')}>
+      <div className={cn('pb-3 space-y-1 shrink-0', collapsed ? 'px-1.5' : 'px-2')}>
         <ProfileChip collapsed={collapsed} />
         {IS_MOCK && (
           <div
             className={cn(
-              'flex items-center gap-1.5 rounded-lg border border-violet/30 bg-violet/10 text-violet px-2.5 py-1.5 text-[11px] font-semibold',
-              collapsed && 'justify-center px-0',
+              'flex items-center rounded-lg border border-violet/30 bg-violet/10 text-violet py-1.5 text-[11px] font-semibold',
+              collapsed ? 'justify-center px-0' : 'gap-1.5 px-2.5',
             )}
           >
             <FlaskConical className="h-3.5 w-3.5 shrink-0" />
             {!collapsed && 'Mock mode — fixture data'}
           </div>
         )}
-        <div
-          className={cn(
-            'flex items-center gap-1.5 px-2.5 py-1 text-[11px]',
-            collapsed && 'justify-center px-0',
-            sse ? 'text-ink-3' : 'text-warn',
-          )}
-        >
-          {sse ? (
-            <span className="h-1.5 w-1.5 rounded-full bg-good status-pulse shrink-0" style={{ ['--pulse-color' as string]: 'var(--good)' }} />
+        {(() => {
+          const liveLabel = sse ? 'Live events connected' : 'Reconnecting…';
+          const status = (
+            <div
+              className={cn(
+                'flex items-center py-1 text-[11px]',
+                collapsed ? 'justify-center px-0' : 'gap-1.5 px-2.5',
+                sse ? 'text-ink-3' : 'text-warn',
+              )}
+            >
+              {sse ? (
+                <span
+                  className="h-1.5 w-1.5 rounded-full bg-good status-pulse shrink-0"
+                  style={{ ['--pulse-color' as string]: 'var(--good)' }}
+                />
+              ) : (
+                <WifiOff className="h-3 w-3 shrink-0" />
+              )}
+              {!collapsed && liveLabel}
+            </div>
+          );
+          return collapsed ? (
+            <Tip label={liveLabel} side="right" sideOffset={RAIL_TIP_OFFSET}>
+              {status}
+            </Tip>
           ) : (
-            <WifiOff className="h-3 w-3 shrink-0" />
-          )}
-          {!collapsed && (sse ? 'Live events connected' : 'Reconnecting…')}
-        </div>
-        <div className={cn('flex items-center gap-1', collapsed && 'flex-col')}>
-          <Button variant="ghost" size="icon-sm" onClick={toggle} aria-label="Toggle theme">
-            {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </Button>
-          <Button variant="ghost" size="icon-sm" onClick={toggleCollapsed} aria-label="Collapse sidebar">
-            {collapsed ? <ChevronsRight className="h-4 w-4" /> : <ChevronsLeft className="h-4 w-4" />}
-          </Button>
+            status
+          );
+        })()}
+        <div className={cn('flex items-center gap-1', collapsed ? 'flex-col justify-center' : '')}>
+          {(() => {
+            const themeLabel = dark ? 'Switch to light theme' : 'Switch to dark theme';
+            const themeBtn = (
+              <Button variant="ghost" size="icon-sm" onClick={toggle} aria-label="Toggle theme">
+                {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </Button>
+            );
+            const collapseLabel = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+            const collapseBtn = (
+              <Button variant="ghost" size="icon-sm" onClick={toggleCollapsed} aria-label="Collapse sidebar">
+                {collapsed ? <ChevronsRight className="h-4 w-4" /> : <ChevronsLeft className="h-4 w-4" />}
+              </Button>
+            );
+            return collapsed ? (
+              <>
+                <Tip label={themeLabel} side="right" sideOffset={RAIL_ICON_TIP_OFFSET}>
+                  {themeBtn}
+                </Tip>
+                <Tip label={collapseLabel} side="right" sideOffset={RAIL_ICON_TIP_OFFSET}>
+                  {collapseBtn}
+                </Tip>
+              </>
+            ) : (
+              <>
+                {themeBtn}
+                {collapseBtn}
+              </>
+            );
+          })()}
         </div>
       </div>
     </motion.aside>

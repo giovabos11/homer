@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer,
 } from 'recharts';
-import { DownloadCloud, ExternalLink, Info, Loader2, MapPin, Rocket, ShieldAlert, ShieldCheck, ShieldX, SkipForward, X } from 'lucide-react';
+import { Clock, DownloadCloud, ExternalLink, Info, Loader2, MapPin, Rocket, ShieldAlert, ShieldCheck, ShieldX, SkipForward, X } from 'lucide-react';
 import type { Job } from '@shared';
 import { api } from '@/api/client';
 import { useStore } from '@/store/useStore';
@@ -174,6 +174,15 @@ export function JobDrawer() {
   const job = detail ?? storeJob ?? null;
   const salary = job ? salaryLabel(job) : null;
   const canApply = job && ['discovered', 'screened', 'skipped'].includes(job.status) && job.legitVerdict !== 'scam';
+  // A live tailor task for this job means it is already queued/being tailored —
+  // the button flips to a disabled "Queued" state (SSE keeps tasks fresh).
+  const tailorQueued = useStore((s) =>
+    jobId != null &&
+    s.tasks.some(
+      (t) => t.type === 'tailor' && (t.state === 'pending' || t.state === 'running') && t.payload.jobId === jobId,
+    ),
+  );
+  const pushToast = useStore((s) => s.pushToast);
   const [fetching, setFetching] = useState(false);
 
   useEffect(() => {
@@ -305,17 +314,32 @@ export function JobDrawer() {
             <div className="px-5 py-3 border-t border-line flex items-center gap-2 bg-raised/40">
               {canApply && (
                 <Button
-                  disabled={busy}
+                  disabled={busy || tailorQueued}
                   onClick={async () => {
                     setBusy(true);
                     try {
-                      await api.applyJob(job.id);
+                      const res = await api.applyJob(job.id);
+                      const n = res.queuePosition ?? 0;
+                      pushToast(
+                        'info',
+                        n > 0
+                          ? `Queued — starts after ${n} running/queued task${n === 1 ? '' : 's'}`
+                          : 'Queued — starting now',
+                      );
                     } finally {
                       setBusy(false);
                     }
                   }}
                 >
-                  <Rocket className="h-4 w-4" /> Start apply pipeline
+                  {tailorQueued ? (
+                    <>
+                      <Clock className="h-4 w-4" /> Queued
+                    </>
+                  ) : (
+                    <>
+                      <Rocket className="h-4 w-4" /> Start apply pipeline
+                    </>
+                  )}
                 </Button>
               )}
               {job.status !== 'skipped' && ['discovered', 'screened'].includes(job.status) && (

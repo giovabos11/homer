@@ -77,6 +77,16 @@ function snapshot(): QueueSnapshot {
   return { tasks: structuredClone(S.tasks), budgets: structuredClone(S.budgets), paused: S.paused };
 }
 
+/** Approximate queue position: running + claim-ordered-earlier pending tasks. */
+function queuePositionOf(task: QueueTask): number {
+  return S.tasks.filter(
+    (t) =>
+      t.state === 'running' ||
+      (t.state === 'pending' && t.id !== task.id &&
+        (t.priority > task.priority || (t.priority === task.priority && t.id < task.id))),
+  ).length;
+}
+
 /** Stream a canned setup reply word-by-word over setup.delta events. */
 function streamSetup(requestId: string, text: string) {
   const words = text.split(/(?<=\s)/);
@@ -370,16 +380,34 @@ export const mockApi: Api = {
     return structuredClone(j);
   },
 
-  async getTopJobs(fitWeighted: boolean, limit = 10) {
+  async getTopJobs(by: 'opportunity' | 'salary', limit = 10) {
     await delay();
-    const ranked = S.jobs
-      .filter((j) => j.salaryMax != null && j.status !== 'quarantined' && j.status !== 'skipped')
-      .sort((a, b) => {
-        const va = (a.salaryMax ?? 0) * (fitWeighted ? (a.fitScore ?? 50) / 100 : 1);
-        const vb = (b.salaryMax ?? 0) * (fitWeighted ? (b.fitScore ?? 50) / 100 : 1);
-        return vb - va;
-      });
-    return structuredClone(ranked.slice(0, limit));
+    // Mirrors the server's EV math: salaryMid × (fit/100)^1.5, ×0.85 predicted.
+    const mid = (j: Job) =>
+      j.salaryMin != null && j.salaryMax != null ? (j.salaryMin + j.salaryMax) / 2 : (j.salaryMax ?? j.salaryMin);
+    const ev = (j: Job): number | null => {
+      const m = mid(j);
+      if (m == null || j.fitScore == null) return null;
+      return Math.round(m * Math.pow(j.fitScore / 100, 1.5) * (j.salaryPredicted ? 0.85 : 1));
+    };
+    const pool = S.jobs.filter(
+      (j) =>
+        mid(j) != null &&
+        !['quarantined', 'skipped', 'rejected'].includes(j.status) &&
+        !['suspicious', 'scam'].includes(j.legitVerdict),
+    );
+    const ranked = [...pool].sort((a, b) => {
+      if (by === 'opportunity') {
+        const ea = ev(a);
+        const eb = ev(b);
+        if (ea != null && eb != null) return eb - ea;
+        if (ea != null) return -1;
+        if (eb != null) return 1;
+        return (mid(b) ?? 0) - (mid(a) ?? 0);
+      }
+      return (b.salaryMax ?? b.salaryMin ?? 0) - (a.salaryMax ?? a.salaryMin ?? 0);
+    });
+    return structuredClone(ranked.slice(0, limit).map((j) => ({ ...j, opportunityScore: ev(j) })));
   },
 
   async createJob(body: Partial<Job>) {
@@ -470,41 +498,48 @@ export const mockApi: Api = {
       }, 2500);
     }, 2200);
     const task: QueueTask = {
-      id: nextId++, type: 'score', state: 'running', payload: { url },
+      id: nextId++, type: 'score', state: 'running', priority: 10, payload: { url },
       cursor: null, runAfter: null, attempts: 1, lastError: null, humanPrompt: null,
       createdAt: now(), updatedAt: now(),
     };
     S.tasks.unshift(task);
     mockBus.emit({ type: 'queue.updated', task: structuredClone(task) });
-    return { job: structuredClone(job), taskId: task.id };
+    return { job: structuredClone(job), taskId: task.id, queuePosition: queuePositionOf(task) };
   },
 
   async applyJob(id: number) {
     await delay();
     const j = S.jobs.find((x) => x.id === id);
     if (!j) throw new Error('job not found');
-    j.status = 'tailoring';
-    let app = S.applications.find((a) => a.jobId === id);
-    if (!app) {
-      app = {
-        id: nextId++, jobId: id, status: 'tailoring', gate: S.settings.gateMode,
-        approvedAt: null, submittedAt: null, resumePath: null, coverLetterPath: null,
-        answers: null, archiveDir: null, notes: [],
-      };
-      S.applications.push(app);
-    } else {
-      app.status = 'tailoring';
-    }
+    // Queued first (priority 10 — jumps the bulk backlog); tailoring begins
+    // when the mock "runner" picks the task up a moment later.
     const task: QueueTask = {
-      id: nextId++, type: 'tailor', state: 'pending', payload: { company: j.company, jobId: id },
+      id: nextId++, type: 'tailor', state: 'pending', priority: 10, payload: { company: j.company, jobId: id },
       cursor: null, runAfter: null, attempts: 0, lastError: null, humanPrompt: null,
       createdAt: now(), updatedAt: now(),
     };
     S.tasks.unshift(task);
-    emitApp(app);
     mockBus.emit({ type: 'queue.updated', task: structuredClone(task) });
-    toast('info', `Tailoring started for ${j.company} — ${j.title}`);
-    return { taskId: task.id };
+    setTimeout(() => {
+      task.state = 'running';
+      task.updatedAt = now();
+      j.status = 'tailoring';
+      let app = S.applications.find((a) => a.jobId === id);
+      if (!app) {
+        app = {
+          id: nextId++, jobId: id, status: 'tailoring', gate: S.settings.gateMode,
+          approvedAt: null, submittedAt: null, resumePath: null, coverLetterPath: null,
+          answers: null, archiveDir: null, notes: [],
+        };
+        S.applications.push(app);
+      } else {
+        app.status = 'tailoring';
+      }
+      emitApp(app);
+      mockBus.emit({ type: 'queue.updated', task: structuredClone(task) });
+      toast('info', `Tailoring started for ${j.company} — ${j.title}`);
+    }, 2000);
+    return { taskId: task.id, queuePosition: queuePositionOf(task) };
   },
 
   async fetchJobDetails(id: number) {
@@ -544,7 +579,7 @@ export const mockApi: Api = {
     let taskId: number | null = null;
     if (j.fitScore == null) {
       const task: QueueTask = {
-        id: nextId++, type: 'score', state: 'pending', payload: { jobId: id, rescore: true },
+        id: nextId++, type: 'score', state: 'pending', priority: 10, payload: { jobId: id, rescore: true },
         cursor: null, runAfter: null, attempts: 0, lastError: null, humanPrompt: null,
         createdAt: now(), updatedAt: now(),
       };
@@ -667,7 +702,7 @@ export const mockApi: Api = {
       return { taskId: existing.id };
     }
     const task: QueueTask = {
-      id: nextId++, type: 'discover', state: 'running', payload: { trigger: 'manual_run' },
+      id: nextId++, type: 'discover', state: 'running', priority: 10, payload: { trigger: 'manual_run' },
       cursor: { source: 'ats_boards', page: 1, item: 0 }, runAfter: null, attempts: 0,
       lastError: null, humanPrompt: null, createdAt: now(), updatedAt: now(),
     };

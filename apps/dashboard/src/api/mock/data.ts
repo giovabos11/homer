@@ -201,14 +201,14 @@ export const APPLICATIONS: Application[] = [
 // ---------------------------------------------------------------------------
 export const QUEUE_TASKS: QueueTask[] = [
   {
-    id: 101, type: 'discover', state: 'running',
+    id: 101, type: 'discover', state: 'running', priority: 0,
     payload: { trigger: 'schedule' },
     cursor: { source: 'remoteok', page: 2, item: 14 },
     runAfter: null, attempts: 1, lastError: null, humanPrompt: null,
     createdAt: daysAgo(0, 9), updatedAt: new Date(NOW - 40000).toISOString(),
   },
   {
-    id: 102, type: 'apply', state: 'needs_human',
+    id: 102, type: 'apply', state: 'needs_human', priority: 10,
     payload: { company: 'Airtable', jobId: byCompany('Airtable').id },
     cursor: { step: 'form_fill', field: 7 },
     runAfter: null, attempts: 1, lastError: null,
@@ -216,38 +216,38 @@ export const QUEUE_TASKS: QueueTask[] = [
     createdAt: daysAgo(0, 8), updatedAt: new Date(NOW - 600000).toISOString(),
   },
   {
-    id: 103, type: 'tailor', state: 'running',
+    id: 103, type: 'tailor', state: 'running', priority: 5,
     payload: { company: 'Ramp', jobId: byCompany('Ramp').id, phase: 'reviewer' },
     cursor: { draft: 2 },
     runAfter: null, attempts: 1, lastError: null, humanPrompt: null,
     createdAt: daysAgo(0, 7), updatedAt: new Date(NOW - 15000).toISOString(),
   },
   {
-    id: 104, type: 'email_scan', state: 'waiting_session',
+    id: 104, type: 'email_scan', state: 'waiting_session', priority: 0,
     payload: { interval: 'periodic' },
     cursor: null, runAfter: inDays(0, 18), attempts: 0, lastError: null,
     humanPrompt: null, createdAt: daysAgo(0, 6), updatedAt: daysAgo(0, 6),
   },
   {
-    id: 105, type: 'score', state: 'pending',
+    id: 105, type: 'score', state: 'pending', priority: 0,
     payload: { company: 'Linear', jobId: byCompany('Linear').id },
     cursor: null, runAfter: null, attempts: 0, lastError: null, humanPrompt: null,
     createdAt: daysAgo(0, 9), updatedAt: daysAgo(0, 9),
   },
   {
-    id: 106, type: 'score', state: 'pending',
+    id: 106, type: 'score', state: 'pending', priority: 0,
     payload: { company: 'Hex', jobId: byCompany('Hex').id },
     cursor: null, runAfter: null, attempts: 0, lastError: null, humanPrompt: null,
     createdAt: daysAgo(0, 10), updatedAt: daysAgo(0, 10),
   },
   {
-    id: 107, type: 'followup', state: 'pending',
+    id: 107, type: 'followup', state: 'pending', priority: 0,
     payload: { company: 'Figma', applicationId: 6, followupNumber: 1 },
     cursor: null, runAfter: inDays(1, 9), attempts: 0, lastError: null, humanPrompt: null,
     createdAt: daysAgo(1), updatedAt: daysAgo(1),
   },
   {
-    id: 108, type: 'discover', state: 'failed',
+    id: 108, type: 'discover', state: 'failed', priority: 0,
     payload: { source: 'linkedin' },
     cursor: { source: 'linkedin', page: 1 },
     runAfter: null, attempts: 3,
@@ -255,7 +255,7 @@ export const QUEUE_TASKS: QueueTask[] = [
     humanPrompt: null, createdAt: daysAgo(1, 8), updatedAt: daysAgo(1, 9),
   },
   {
-    id: 109, type: 'prep_guide', state: 'done',
+    id: 109, type: 'prep_guide', state: 'done', priority: 0,
     payload: { company: 'Datadog', eventId: 1 },
     cursor: null, runAfter: null, attempts: 1, lastError: null, humanPrompt: null,
     createdAt: daysAgo(3), updatedAt: daysAgo(3),
@@ -446,10 +446,16 @@ export const SETTINGS: Settings = {
   maxFollowups: 2,
   modelAsk: 'haiku',
   modelSetup: 'sonnet',
-  modelScraper: 'sonnet',
-  modelPipeline: 'sonnet',
+  modelScraper: 'haiku',
+  modelScore: 'haiku',
+  modelTailor: 'sonnet',
+  modelPrep: 'sonnet',
+  modelEmail: 'haiku',
+  modelFollowup: 'sonnet',
+  modelFeedback: 'sonnet',
   autoAdvance: 'threshold',
   autoAdvanceThreshold: 70,
+  queueConcurrency: 2,
 };
 
 export const FEEDBACK: FeedbackEntry[] = [
