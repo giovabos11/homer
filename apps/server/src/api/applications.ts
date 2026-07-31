@@ -13,6 +13,7 @@ import {
   standingKeyForQuestion,
   unresolvedQuestions,
 } from '../docs/screening';
+import { isAdvisoryQuestion, parseAdvisories } from '../docs/advisories';
 import { STANDING_ANSWER_KEYS } from '../docs/standing';
 import type { ScreeningAnswerValue, StandingAnswerKey, StandingAnswers } from '@shared/types';
 import type { AppContext } from '../context';
@@ -113,6 +114,7 @@ export function applicationRoutes(ctx: AppContext): Router {
     for (const [question, value] of Object.entries(body.answers)) {
       const text = value.trim();
       if (text === '') continue; // blank never clears a needs-user marker
+      if (isAdvisoryQuestion(question)) continue; // notes are read-only, not answers
       next[question] = text;
       changed.push(question);
     }
@@ -207,6 +209,8 @@ export function applicationRoutes(ctx: AppContext): Router {
       answers: existing.answersJson
         ? normalizeAnswers(JSON.parse(existing.answersJson) as Record<string, unknown>)
         : null,
+      // Read-only drafting notes. Rendered below the questions, never blocking.
+      advisories: parseAdvisories(existing.advisoriesJson),
     });
   });
 

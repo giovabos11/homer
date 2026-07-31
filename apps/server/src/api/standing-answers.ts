@@ -1,29 +1,49 @@
 // Standing answers (contract §Standing answers — FR-9).
 // The "answer once, reuse forever" values only the candidate can supply.
 // Nothing here is ever agent-written: the API is the only writer.
+//
+// Validation is case-insensitive and value-normalizing. The dashboard sends
+// canonical option values from dropdowns, but a hand-typed "No" must be as
+// valid as "no": casing is not a mistake the user should have to fix.
 import { Router } from 'express';
 import { z } from 'zod';
+import type { StandingAnswerKey } from '@shared/types';
+import { canonicalizeStandingValue, normalizeYesNo } from '../docs/standing';
 import type { AppContext } from '../context';
 import { parseBody } from './util';
 
-const text = (max = 400) => z.string().max(max);
+/** Free text, trimmed, snapped to a canonical option when it matches one. */
+const answer = (key: StandingAnswerKey, max = 400) =>
+  z
+    .string()
+    .max(max)
+    .transform((v) => canonicalizeStandingValue(key, v));
+
+/** '' | yes | no, in any casing or phrasing ("Yes", "NO", "None"). */
+const yesNoAnswer = z
+  .string()
+  .max(120)
+  .refine((v) => normalizeYesNo(v) !== null, {
+    message: "expected '', 'yes', or 'no' (any casing)",
+  })
+  .transform((v) => normalizeYesNo(v)!);
 
 export const standingAnswersPatchSchema = z
   .object({
-    salaryExpectation: text(),
+    salaryExpectation: answer('salaryExpectation'),
     salaryMinAcceptable: z.number().min(0).max(100_000_000).nullable(),
-    earliestStartDate: text(200),
-    noticePeriod: text(200),
-    citizenshipStatus: text(),
-    requiresSponsorship: z.enum(['', 'yes', 'no']),
-    securityClearance: text(200),
-    eeoRace: text(200),
-    eeoGender: text(200),
-    eeoVeteran: text(200),
-    eeoDisability: text(200),
-    willingToRelocate: text(),
-    preferredPronouns: text(80),
-    referencesAvailable: text(),
+    earliestStartDate: answer('earliestStartDate', 200),
+    noticePeriod: answer('noticePeriod', 200),
+    citizenshipStatus: answer('citizenshipStatus'),
+    requiresSponsorship: yesNoAnswer,
+    securityClearance: answer('securityClearance', 200),
+    eeoRace: answer('eeoRace', 200),
+    eeoGender: answer('eeoGender', 200),
+    eeoVeteran: answer('eeoVeteran', 200),
+    eeoDisability: answer('eeoDisability', 200),
+    willingToRelocate: answer('willingToRelocate'),
+    preferredPronouns: answer('preferredPronouns', 80),
+    referencesAvailable: answer('referencesAvailable'),
   })
   .partial()
   .strict();

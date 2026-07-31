@@ -78,6 +78,36 @@ export function isNeedsUserAnswer(v: ScreeningAnswerValue | undefined | null): v
   return typeof v === 'object' && v !== null && (v as NeedsUserAnswer).status === 'needs_user';
 }
 
+/**
+ * A note the drafter/reviewer left about THIS application: a gap between the
+ * posting and the profile, a claim nobody could verify, a compensation or
+ * location caveat. Advisories are transparency, not homework — they are never
+ * questions, never block approval, and never reach a form field. They live
+ * outside `Application.answers` precisely so they cannot be mistaken for one.
+ */
+export type AdvisoryKind = 'gap' | 'unverified' | 'compensation' | 'location' | 'other';
+
+export interface Advisory {
+  kind: AdvisoryKind;
+  text: string;
+}
+
+/** Section headings for the review modal's read-only notes list. */
+export const ADVISORY_KIND_LABELS: Record<AdvisoryKind, string> = {
+  gap: 'Profile gaps',
+  unverified: 'Unverified claims',
+  compensation: 'Compensation',
+  location: 'Location and travel',
+  other: 'Other notes',
+};
+
+/** Stable render order for the grouped notes list. */
+export const ADVISORY_KIND_ORDER: AdvisoryKind[] = ['gap', 'compensation', 'location', 'unverified', 'other'];
+
+export function isAdvisory(v: unknown): v is Advisory {
+  return typeof v === 'object' && v !== null && typeof (v as Advisory).text === 'string';
+}
+
 export type StandingAnswerKey =
   | 'salaryExpectation'
   | 'salaryMinAcceptable'
@@ -120,6 +150,53 @@ export interface StandingAnswers {
   referencesAvailable: string;
 }
 
+/**
+ * Option sets for the enum-ish standing answers. The dashboard renders these as
+ * dropdowns; the server canonicalizes any typed value against the same list, so
+ * "no", "No" and "NO" all land on the same stored value instead of erroring.
+ * A key absent here is free text by design (salary expectation, citizenship,
+ * pronouns, references).
+ *
+ * `requiresSponsorship` is the one strictly enumerated key: it is stored
+ * lowercase ('' | 'yes' | 'no') because the apply driver matches on it.
+ */
+export const STANDING_ANSWER_OPTIONS = {
+  requiresSponsorship: ['yes', 'no'],
+  willingToRelocate: ['Yes, anywhere in the US', 'Yes, within my region', 'No', 'Open to discuss'],
+  securityClearance: ['None', 'Active Secret', 'Active Top Secret', 'Other'],
+  noticePeriod: ['None', '1 week', '2 weeks', '1 month', 'Other'],
+  earliestStartDate: [
+    'Immediately',
+    'One week from offer',
+    'Two weeks from offer',
+    'One month from offer',
+    'Specific date',
+  ],
+  eeoRace: [
+    'American Indian or Alaska Native',
+    'Asian',
+    'Black or African American',
+    'Hispanic or Latino',
+    'Native Hawaiian or Other Pacific Islander',
+    'White',
+    'Two or more races',
+    'Decline to self-identify',
+  ],
+  eeoGender: ['Male', 'Female', 'Non-binary', 'Decline to self-identify'],
+  eeoVeteran: [
+    'I am not a protected veteran',
+    'I identify as one or more classifications of a protected veteran',
+    'Decline to self-identify',
+  ],
+  eeoDisability: [
+    'Yes, I have a disability, or have had one in the past',
+    'No, I do not have a disability and have not had one in the past',
+    'Decline to self-identify',
+  ],
+} as const satisfies Partial<Record<StandingAnswerKey, readonly string[]>>;
+
+export type EnumishStandingKey = keyof typeof STANDING_ANSWER_OPTIONS;
+
 export interface Application {
   id: number;
   jobId: number;
@@ -130,7 +207,10 @@ export interface Application {
   submittedAt: string | null;
   resumePath: string | null;
   coverLetterPath: string | null;
+  /** REAL form questions only. Advisory notes never live here (see `advisories`). */
   answers: Record<string, ScreeningAnswerValue> | null;
+  /** Read-only drafting notes: gaps, unverified claims, comp/location caveats. */
+  advisories: Advisory[];
   archiveDir: string | null;
   notes: { date: string; text: string }[];
   /** True when the submit gate approved this without a human click (FR-9/D1). */

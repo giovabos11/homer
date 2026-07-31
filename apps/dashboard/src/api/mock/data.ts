@@ -176,6 +176,13 @@ function app(company: string, o: Partial<Application> = {}): Application {
         standingKey: 'salaryExpectation',
       },
     },
+    // Drafting notes: never questions, never blocking. Rendered read-only under
+    // the screening answers so a gap is visible without pretending to be homework.
+    advisories: [
+      { kind: 'gap', text: 'Posting lists GraphQL as a core skill; the profile documents REST only. Not claimed.' },
+      { kind: 'unverified', text: `No independently verified information about ${company}'s engineering practices was available, so the cover letter stays general.` },
+      { kind: 'location', text: 'Role is onsite in San Francisco. Relocation timeline is worth confirming before the first call.' },
+    ],
     archiveDir: `documents/applications/${company.toLowerCase().replace(/\W+/g, '_')}`,
     notes: [],
     autoSubmitted: false,

@@ -1,5 +1,5 @@
 import type {
-  Application, Connection, ConnectionName, CredentialMeta, EmailRecord, FeedbackEntry,
+  Advisory, Application, Connection, ConnectionName, CredentialMeta, EmailRecord, FeedbackEntry,
   FeedbackKind, Job, JobStatus, PrepTask, QueueTask, RemoteType, ScheduleEvent,
   ScheduleNextRuns, ScreeningAnswerValue, Settings, SkillProgress, SourceBudget,
   StandingAnswerKey, StandingAnswers, TaskType, UserProfile,
@@ -37,7 +37,10 @@ export interface ApplicationArtifacts {
   resumeUrl: string | null;
   coverLetterUrl: string | null;
   screenshots: string[];
+  /** Real form questions only. */
   answers: Record<string, ScreeningAnswerValue> | null;
+  /** Read-only drafting notes: gaps, unverified claims, comp/location caveats. */
+  advisories?: Advisory[];
 }
 
 export interface StandingAnswersResponse {

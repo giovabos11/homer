@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, FileText, Loader2, Lock, PencilLine, Save, Sparkles, XCircle } from 'lucide-react';
-import type { Application, Job, ScreeningAnswerValue } from '@shared';
-import { isNeedsUserAnswer } from '@shared';
+import { CheckCircle2, ChevronRight, FileText, Loader2, Lock, PencilLine, Save, Sparkles, XCircle } from 'lucide-react';
+import type { Advisory, AdvisoryKind, Application, Job, ScreeningAnswerValue } from '@shared';
+import { ADVISORY_KIND_LABELS, ADVISORY_KIND_ORDER, isNeedsUserAnswer } from '@shared';
 import { api } from '@/api/client';
 import { useStore } from '@/store/useStore';
 import type { ApplicationArtifacts } from '@/api/types';
@@ -27,12 +27,25 @@ interface Row {
   standingKey?: string;
 }
 
+/**
+ * Drafting notes used to be stored as answers keyed "FLAG: …" plus a catch-all
+ * policy row. The server moves both out on boot; this keeps an older row from
+ * ever showing up here as a question again.
+ */
+function isDraftingNote(question: string): boolean {
+  const q = question.trim();
+  return (
+    q.toUpperCase().startsWith('FLAG:') ||
+    /^skills,?\s*tools,?\s*or\s+experience\s+not\s+in\s+the\s+profile$/i.test(q)
+  );
+}
+
 function toRows(answers: Record<string, ScreeningAnswerValue> | null): Row[] {
   if (!answers) return [];
   // What needs the user comes first — that is the whole job of this tab.
-  const entries = Object.entries(answers).sort(
-    (a, b) => Number(isNeedsUserAnswer(b[1])) - Number(isNeedsUserAnswer(a[1])),
-  );
+  const entries = Object.entries(answers)
+    .filter(([question]) => !isDraftingNote(question))
+    .sort((a, b) => Number(isNeedsUserAnswer(b[1])) - Number(isNeedsUserAnswer(a[1])));
   return entries.map(([question, value]) => {
     if (isNeedsUserAnswer(value)) {
       return {
@@ -120,6 +133,82 @@ function AnswerField({
   );
 }
 
+/**
+ * Read-only drafting notes. They are deliberately the quietest thing in the
+ * modal: collapsed by default, no inputs, no badges, nothing to resolve. What
+ * the drafter could not ground stays visible without pretending to be work.
+ */
+function DraftingNotes({ advisories }: { advisories: Advisory[] }) {
+  const [open, setOpen] = useState(false);
+  const groups = useMemo(() => {
+    const by = new Map<AdvisoryKind, string[]>();
+    for (const a of advisories) {
+      const list = by.get(a.kind) ?? [];
+      list.push(a.text);
+      by.set(a.kind, list);
+    }
+    return ADVISORY_KIND_ORDER.filter((k) => by.has(k)).map((k) => ({ kind: k, notes: by.get(k)! }));
+  }, [advisories]);
+
+  if (advisories.length === 0) return null;
+
+  return (
+    <section className="mt-3 pt-3 border-t border-line">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="group flex w-full items-center gap-2 text-left cursor-pointer"
+      >
+        <ChevronRight
+          className={cn(
+            'h-3.5 w-3.5 text-ink-3 transition-transform duration-150 shrink-0',
+            open && 'rotate-90',
+          )}
+        />
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3 group-hover:text-ink-2 transition-colors">
+          Notes from drafting
+        </span>
+        <span className="text-[11px] tabular text-ink-3 rounded-full bg-overlay/70 px-1.5">{advisories.length}</span>
+        <span className="h-px flex-1 bg-line" />
+      </button>
+
+      {open ? (
+        <div className="mt-2.5 space-y-3 max-h-[22vh] overflow-y-auto pr-1">
+          <p className="text-[11px] text-ink-3 leading-relaxed">
+            Gaps between this posting and your profile, plus claims Homer could not verify. Nothing here is waiting on
+            you, and none of it was written into the application.
+          </p>
+          {groups.map((g) => (
+            <div key={g.kind}>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-ink-3">
+                  {ADVISORY_KIND_LABELS[g.kind]}
+                </span>
+                <span className="h-px flex-1 bg-line/70" />
+              </div>
+              <ul className="mt-1 space-y-1">
+                {g.notes.map((text, i) => (
+                  <li
+                    key={`${g.kind}-${i}`}
+                    className="border-l border-line pl-2.5 text-[12px] leading-relaxed text-ink-3"
+                  >
+                    {text}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-1.5 ml-5.5 text-[11px] text-ink-3 leading-relaxed">
+          Gaps and unverified claims noted while drafting. Read when you want the context; they never block approval.
+        </p>
+      )}
+    </section>
+  );
+}
+
 export function ReviewDialog({
   app,
   job,
@@ -159,6 +248,7 @@ export function ReviewDialog({
 
   const answers = artifacts?.answers ?? app.answers;
   const rows = useMemo(() => toRows(answers), [answers]);
+  const advisories = artifacts?.advisories ?? app.advisories ?? [];
 
   // Reset the editing buffer whenever a new answer set arrives. Standing-answer
   // saving defaults ON for the questions that have a standing key.
@@ -251,7 +341,12 @@ export function ReviewDialog({
               <TabsContent value="answers" className="mt-3">
                 {rows.length > 0 ? (
                   <>
-                    <div className="space-y-2 max-h-[46vh] overflow-y-auto pr-1">
+                    <div
+                      className={cn(
+                        'space-y-2 overflow-y-auto pr-1',
+                        advisories.length > 0 ? 'max-h-[30vh]' : 'max-h-[46vh]',
+                      )}
+                    >
                       {rows.map((r) => (
                         <AnswerField
                           key={r.question}
@@ -277,6 +372,7 @@ export function ReviewDialog({
                 ) : (
                   <p className="text-sm text-ink-3 py-8 text-center">No screening answers recorded for this form.</p>
                 )}
+                <DraftingNotes advisories={advisories} />
               </TabsContent>
             </Tabs>
           )}

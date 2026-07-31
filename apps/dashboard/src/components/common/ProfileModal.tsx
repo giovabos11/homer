@@ -7,6 +7,7 @@ import {
   ClipboardList, FileText, Loader2, PencilLine, Save, UserRound, X,
 } from 'lucide-react';
 import type { StandingAnswerKey, StandingAnswers } from '@shared';
+import { STANDING_ANSWER_OPTIONS } from '@shared';
 import { api } from '@/api/client';
 import { useStore } from '@/store/useStore';
 import { fmtRelative } from '@/lib/format';
@@ -14,6 +15,7 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 
 const SKILL_DIR = '.claude/skills/job-application-assistant';
@@ -158,17 +160,54 @@ function ContactSection() {
 }
 
 /* --------------------------- Standing answers form --------------------------- */
-type FieldSpec = { key: StandingAnswerKey; label: string; placeholder: string; wide?: boolean; numeric?: boolean };
+type Option = { value: string; label: string };
+type FieldSpec = {
+  key: StandingAnswerKey;
+  label: string;
+  placeholder: string;
+  wide?: boolean;
+  numeric?: boolean;
+  /** Renders a dropdown instead of a free-text box. */
+  options?: Option[];
+  /** The option that reveals a date picker (start date). */
+  dateOption?: string;
+  /** No free-text escape hatch: the server only accepts these values. */
+  strict?: boolean;
+  /** One-click values shown under a free-text field. */
+  chips?: string[];
+  help?: string;
+};
+
+const plain = (values: readonly string[]): Option[] => values.map((v) => ({ value: v, label: v }));
 
 const ANSWER_GROUPS: { title: string; note: string; fields: FieldSpec[] }[] = [
   {
     title: 'Compensation & timing',
     note: 'Homer never puts a number here on your behalf.',
     fields: [
-      { key: 'salaryExpectation', label: 'Salary expectations', placeholder: 'e.g. Open, targeting market rate for the role', wide: true },
-      { key: 'salaryMinAcceptable', label: 'Minimum acceptable (optional)', placeholder: 'e.g. 80000', numeric: true },
-      { key: 'earliestStartDate', label: 'Earliest start date', placeholder: 'e.g. Two weeks from an offer' },
-      { key: 'noticePeriod', label: 'Notice period', placeholder: 'e.g. None' },
+      {
+        key: 'salaryExpectation',
+        label: 'Salary expectations',
+        placeholder: 'e.g. Open, targeting market rate for the role',
+        wide: true,
+        chips: ['Open', 'Market rate for the role'],
+        help: 'Free text, sent as written. When a posting publishes its own range, a stance like "Open" is answered as "Aligned with the posted range".',
+      },
+      {
+        key: 'salaryMinAcceptable',
+        label: 'Minimum acceptable (optional)',
+        placeholder: 'e.g. 80000',
+        numeric: true,
+        help: 'Never sent to an employer. It only adds a note when a posted range starts below it.',
+      },
+      {
+        key: 'earliestStartDate',
+        label: 'Earliest start date',
+        placeholder: 'Select…',
+        options: plain(STANDING_ANSWER_OPTIONS.earliestStartDate),
+        dateOption: 'Specific date',
+      },
+      { key: 'noticePeriod', label: 'Notice period', placeholder: 'Select…', options: plain(STANDING_ANSWER_OPTIONS.noticePeriod) },
     ],
   },
   {
@@ -176,19 +215,28 @@ const ANSWER_GROUPS: { title: string; note: string; fields: FieldSpec[] }[] = [
     note: 'Your words, verbatim. Citizenship is never inferred from anything else in your profile.',
     fields: [
       { key: 'citizenshipStatus', label: 'Citizenship / status', placeholder: 'e.g. Authorized to work in the US for any employer', wide: true },
-      { key: 'requiresSponsorship', label: 'Requires sponsorship', placeholder: 'yes or no' },
-      { key: 'securityClearance', label: 'Security clearance', placeholder: 'e.g. None' },
-      { key: 'willingToRelocate', label: 'Willing to relocate', placeholder: 'e.g. Yes, anywhere in the US' },
+      {
+        key: 'requiresSponsorship',
+        label: 'Requires sponsorship',
+        placeholder: 'Select…',
+        options: [
+          { value: 'yes', label: 'Yes' },
+          { value: 'no', label: 'No' },
+        ],
+        strict: true,
+      },
+      { key: 'securityClearance', label: 'Security clearance', placeholder: 'Select…', options: plain(STANDING_ANSWER_OPTIONS.securityClearance) },
+      { key: 'willingToRelocate', label: 'Willing to relocate', placeholder: 'Select…', options: plain(STANDING_ANSWER_OPTIONS.willingToRelocate) },
     ],
   },
   {
     title: 'Voluntary EEO',
-    note: '“Prefer not to say” is always a valid answer and is the default.',
+    note: 'Every question here is optional. “Decline to self-identify” is always a valid answer.',
     fields: [
-      { key: 'eeoRace', label: 'Race / ethnicity', placeholder: 'Prefer not to say' },
-      { key: 'eeoGender', label: 'Gender', placeholder: 'Prefer not to say' },
-      { key: 'eeoVeteran', label: 'Veteran status', placeholder: 'Prefer not to say' },
-      { key: 'eeoDisability', label: 'Disability status', placeholder: 'Prefer not to say' },
+      { key: 'eeoRace', label: 'Race / ethnicity', placeholder: 'Select…', options: plain(STANDING_ANSWER_OPTIONS.eeoRace), wide: true },
+      { key: 'eeoGender', label: 'Gender', placeholder: 'Select…', options: plain(STANDING_ANSWER_OPTIONS.eeoGender) },
+      { key: 'eeoVeteran', label: 'Veteran status', placeholder: 'Select…', options: plain(STANDING_ANSWER_OPTIONS.eeoVeteran), wide: true },
+      { key: 'eeoDisability', label: 'Disability status', placeholder: 'Select…', options: plain(STANDING_ANSWER_OPTIONS.eeoDisability), wide: true },
     ],
   },
   {
@@ -201,12 +249,95 @@ const ANSWER_GROUPS: { title: string; note: string; fields: FieldSpec[] }[] = [
   },
 ];
 
+const OTHER = '__other__';
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Dropdown for the answers that really are a fixed set, with an escape hatch:
+ * "Other" reveals a text box, and the start-date list reveals a date picker.
+ * A value the list does not contain (an answer set before these lists existed)
+ * opens in the escape hatch with the value intact, never silently dropped.
+ */
+function AnswerSelect({
+  field,
+  value,
+  onChange,
+}: {
+  field: FieldSpec;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const options = field.options ?? [];
+  // Case- and punctuation-insensitive, so a value typed before these lists
+  // existed ("one week from offer") still selects its option instead of
+  // dropping into the Other box.
+  const norm = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const matched = options.find((o) => norm(o.value) === norm(value));
+  const [mode, setMode] = useState<'list' | 'other' | 'date'>(() => {
+    if (value === '' || matched) return 'list';
+    if (field.dateOption && ISO_DATE.test(value)) return 'date';
+    return 'other';
+  });
+
+  const selected =
+    mode === 'list' ? (value === '' ? undefined : (matched?.value ?? OTHER)) : mode === 'date' ? field.dateOption : OTHER;
+
+  return (
+    <div className="mt-0.5 space-y-1.5">
+      <Select
+        value={selected}
+        onValueChange={(v) => {
+          if (v === OTHER) {
+            setMode('other');
+            onChange('');
+            return;
+          }
+          if (field.dateOption && v === field.dateOption) {
+            setMode('date');
+            onChange('');
+            return;
+          }
+          setMode('list');
+          onChange(v);
+        }}
+      >
+        <SelectTrigger className="w-full">
+          <SelectValue placeholder={field.placeholder} />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((o) => (
+            <SelectItem key={o.value} value={o.value}>
+              {o.label}
+            </SelectItem>
+          ))}
+          {!field.strict && <SelectItem value={OTHER}>Other…</SelectItem>}
+        </SelectContent>
+      </Select>
+
+      {mode === 'other' && (
+        <Input autoFocus value={value} placeholder="Type your answer" onChange={(e) => onChange(e.target.value)} />
+      )}
+      {mode === 'date' && (
+        <Input
+          type="date"
+          value={ISO_DATE.test(value) ? value : ''}
+          onChange={(e) => onChange(e.target.value)}
+          className="[color-scheme:light] dark:[color-scheme:dark]"
+        />
+      )}
+    </div>
+  );
+}
+
 function StandingAnswersSection() {
   const pushToast = useStore((s) => s.pushToast);
   const setMissingStanding = useStore((s) => s.setMissingStanding);
   const [form, setForm] = useState<Record<string, string>>({});
   const [loaded, setLoaded] = useState<Record<string, string> | null>(null);
   const [saving, setSaving] = useState(false);
+  // Bumped whenever a server snapshot lands, so every dropdown re-derives
+  // whether its value is on the list or belongs in the "Other" box.
+  const [snapshot, setSnapshot] = useState(0);
 
   const toForm = (a: StandingAnswers): Record<string, string> =>
     Object.fromEntries(Object.entries(a).map(([k, v]) => [k, v == null ? '' : String(v)]));
@@ -219,6 +350,7 @@ function StandingAnswersSection() {
         if (!alive) return;
         setForm(toForm(r.answers));
         setLoaded(toForm(r.answers));
+        setSnapshot((n) => n + 1);
         setMissingStanding(r.missingCritical);
       })
       .catch(() => undefined);
@@ -241,6 +373,7 @@ function StandingAnswersSection() {
       const r = await api.putStandingAnswers(body as Partial<StandingAnswers>);
       setForm(toForm(r.answers));
       setLoaded(toForm(r.answers));
+      setSnapshot((n) => n + 1);
       setMissingStanding(r.missingCritical);
       pushToast('success', 'Application answers saved — reused on every application from now on');
     } catch (e) {
@@ -267,21 +400,54 @@ function StandingAnswersSection() {
               <p className="text-[11px] text-ink-3">{g.note}</p>
             </div>
             <div className="grid grid-cols-2 gap-2 max-[860px]:grid-cols-1">
-              {g.fields.map((f) => (
-                <label key={f.key} className={cn('block', f.wide && 'col-span-2 max-[860px]:col-span-1')}>
-                  <span className="text-[11px] text-ink-3">
-                    {f.label}
-                    {(form[f.key] ?? '') === '' && <span className="text-warn ml-1.5">not answered</span>}
-                  </span>
-                  <Input
-                    value={form[f.key] ?? ''}
-                    placeholder={f.placeholder}
-                    inputMode={f.numeric ? 'numeric' : undefined}
-                    onChange={(e) => setForm((prev) => ({ ...prev, [f.key]: e.target.value }))}
-                    className="mt-0.5"
-                  />
-                </label>
-              ))}
+              {g.fields.map((f) => {
+                const value = form[f.key] ?? '';
+                const set = (v: string) => setForm((prev) => ({ ...prev, [f.key]: v }));
+                const chips = f.chips ?? [];
+                const quickFill =
+                  f.key === 'salaryExpectation' && (form.salaryMinAcceptable ?? '') !== ''
+                    ? [...chips, `$${Number(form.salaryMinAcceptable).toLocaleString('en-US')}+`]
+                    : chips;
+                return (
+                  <div key={f.key} className={cn('block', f.wide && 'col-span-2 max-[860px]:col-span-1')}>
+                    <span className="text-[11px] text-ink-3">
+                      {f.label}
+                      {value === '' && <span className="text-warn ml-1.5">not answered</span>}
+                    </span>
+                    {f.options ? (
+                      <AnswerSelect key={`${f.key}-${snapshot}`} field={f} value={value} onChange={set} />
+                    ) : (
+                      <Input
+                        value={value}
+                        placeholder={f.placeholder}
+                        inputMode={f.numeric ? 'numeric' : undefined}
+                        onChange={(e) => set(e.target.value)}
+                        className="mt-0.5"
+                      />
+                    )}
+                    {quickFill.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {quickFill.map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => set(c)}
+                            className={cn(
+                              'rounded-full border px-2 py-0.5 text-[11px] transition-colors cursor-pointer',
+                              value === c
+                                ? 'border-accent/60 text-accent bg-accent/8'
+                                : 'border-line text-ink-3 hover:border-line-strong hover:text-ink-2',
+                            )}
+                          >
+                            {c}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {f.help && <p className="text-[11px] text-ink-3 mt-1 leading-relaxed">{f.help}</p>}
+                  </div>
+                );
+              })}
             </div>
           </div>
         ))}

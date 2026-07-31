@@ -14,6 +14,7 @@
 import type { NeedsUserAnswer, ScreeningAnswerValue, StandingAnswerKey, StandingAnswers } from '@shared/types';
 import { LEGACY_FLAGGED_ANSWER, isNeedsUserAnswer } from '@shared/types';
 import { readRepoFile } from '../agent/prompts';
+import { formatMoney, isAdvisoryQuestion, type JobSalaryContext } from './advisories';
 import { STANDING_ANSWER_DEFAULTS, standingValue } from './standing';
 
 /** Legacy sentinel — still written by nothing, still READ from old rows. */
@@ -173,25 +174,41 @@ function needsUser(question: string, key: StandingAnswerKey | null, suggestion?:
   };
 }
 
+/** Job facts the resolver may reference honestly (never invent from). */
+export type ScreeningJobContext = JobSalaryContext;
+
 /**
  * The answers map for an application: standing answers → profile rules →
  * structured needs-user markers. Standing answers that no defaults-table row
  * covers (EEO, pronouns, references) are appended only when they have a value,
  * so an unset optional never blocks an application.
+ *
+ * Only REAL form questions land here. The defaults table's catch-all row
+ * ("Skills, tools, or experience not in the profile") is a policy statement, not
+ * a question, and is dropped: what it stands for is reported as advisories.
+ *
+ * `job` lets the salary answer reference the posting's own range instead of a
+ * bare "Open". Nothing else reads it, and it can never manufacture a number the
+ * posting did not publish.
  */
 export function resolveScreeningAnswers(
   repoRoot: string,
   standing: StandingAnswers = STANDING_ANSWER_DEFAULTS,
+  job?: ScreeningJobContext | null,
 ): Record<string, ScreeningAnswerValue> {
   const out: Record<string, ScreeningAnswerValue> = {};
 
   for (const d of loadScreeningDefaults(repoRoot)) {
+    if (isAdvisoryQuestion(d.question)) continue; // policy row, not a question
     const keys = standingKeysForQuestion(d.question);
-    const values = keys.map((k) => standingValue(standing, k));
+    const values = keys.map((k) => displayStandingValue(k, standingValue(standing, k)));
     // A combined question ("clearance / citizenship") only resolves once every
     // topic it asks about has a standing answer — half an answer is a wrong one.
     if (keys.length > 0 && values.every((v) => v !== '')) {
-      out[d.question] = values.join('; '); // 1. standing wins
+      out[d.question] =
+        keys.length === 1 && keys[0] === 'salaryExpectation'
+          ? salaryAnswer(values[0]!, job)
+          : values.join('; '); // 1. standing wins
       continue;
     }
     if (!d.flagged) {
@@ -199,22 +216,75 @@ export function resolveScreeningAnswers(
       continue;
     }
     const missing = keys.find((k) => standingValue(standing, k) === '') ?? keys[0] ?? null;
-    out[d.question] = needsUser(d.question, missing, salarySuggestion(missing, standing)); // 3. flagged
+    out[d.question] = needsUser(d.question, missing, salarySuggestion(missing, standing, job)); // 3. flagged
   }
 
   // Standing answers with no row in the defaults table (EEO, pronouns,
   // references, notice period, citizenship on its own) — only when answered,
   // so an unset optional can never block an application.
   for (const topic of STANDING_TOPICS) {
-    const value = standingValue(standing, topic.key);
-    if (value) out[topic.question] = value;
+    const value = displayStandingValue(topic.key, standingValue(standing, topic.key));
+    if (!value) continue;
+    out[topic.question] = topic.key === 'salaryExpectation' ? salaryAnswer(value, job) : value;
   }
   return out;
 }
 
-/** A numeric floor is a hint, never an auto-answer. */
-function salarySuggestion(key: StandingAnswerKey | null, standing: StandingAnswers): string | undefined {
+/**
+ * The posting's published range, phrased for a form field. Returns null when
+ * the posting has no range or the range was predicted rather than published —
+ * Homer only ever quotes numbers the employer actually printed.
+ */
+export function postedRangePhrase(job?: ScreeningJobContext | null): string | null {
+  if (!job || job.salaryPredicted) return null;
+  const { salaryMin: min, salaryMax: max, salaryCurrency: cur } = job;
+  const has = (n: number | null | undefined): n is number => n != null && Number.isFinite(n) && n > 0;
+  if (has(min) && has(max) && max > min) return `Aligned with the posted range (${formatMoney(min, cur)}-${formatMoney(max, cur)})`;
+  if (has(min)) return `Aligned with the posted range (${formatMoney(min, cur)}+)`;
+  if (has(max)) return `Aligned with the posted range (up to ${formatMoney(max, cur)})`;
+  return null;
+}
+
+/**
+ * Presentation form of a standing value. `requiresSponsorship` is stored
+ * lowercase because the apply driver matches on it, but "no" reads as a typo in
+ * a review modal and in a free-text form field, so it is answered as "No".
+ */
+export function displayStandingValue(key: StandingAnswerKey, raw: string): string {
+  if (key !== 'requiresSponsorship') return raw;
+  if (raw === 'yes') return 'Yes';
+  if (raw === 'no') return 'No';
+  return raw;
+}
+
+/** True when the user typed an actual figure rather than a stance like "Open". */
+function isSpecificFigure(value: string): boolean {
+  return /\d/.test(value);
+}
+
+/**
+ * Salary answer, in priority order:
+ *   1. the user's own figure, if they set one — never rewritten;
+ *   2. the posting's published range, referenced honestly;
+ *   3. the user's standing stance ("Open") verbatim.
+ */
+export function salaryAnswer(standingText: string, job?: ScreeningJobContext | null): string {
+  if (isSpecificFigure(standingText)) return standingText;
+  return postedRangePhrase(job) ?? standingText;
+}
+
+/**
+ * A suggestion is offered, never applied. With a published range that is the
+ * range; otherwise a numeric floor becomes a hint.
+ */
+function salarySuggestion(
+  key: StandingAnswerKey | null,
+  standing: StandingAnswers,
+  job?: ScreeningJobContext | null,
+): string | undefined {
   if (key !== 'salaryExpectation') return undefined;
+  const posted = postedRangePhrase(job);
+  if (posted) return posted;
   const floor = standing.salaryMinAcceptable;
   if (floor == null || !Number.isFinite(floor)) return undefined;
   return `At least ${Math.round(floor).toLocaleString('en-US')} per year`;
@@ -241,11 +311,17 @@ export function normalizeAnswers(
   return out;
 }
 
-/** Questions still waiting on the user. */
+/**
+ * Real form questions still waiting on the user.
+ *
+ * Advisory keys are excluded on purpose and belt-and-braces: rows written
+ * before the advisories column existed (and any that dodge the boot repair)
+ * must never be able to block an approval again.
+ */
 export function unresolvedQuestions(answers: Record<string, ScreeningAnswerValue> | null | undefined): string[] {
   if (!answers) return [];
   return Object.entries(answers)
-    .filter(([, v]) => isNeedsUserAnswer(v))
+    .filter(([q, v]) => isNeedsUserAnswer(v) && !isAdvisoryQuestion(q))
     .map(([q]) => q);
 }
 
@@ -315,14 +391,19 @@ export function yesNo(answer: string): 'yes' | 'no' | null {
   return null;
 }
 
-/** Answers map (any vintage) → the ScreeningDefault[] shape the driver plans with. */
+/**
+ * Answers map (any vintage) → the ScreeningDefault[] shape the driver plans
+ * with. Advisory keys are dropped: they are notes, and no form field asks them.
+ */
 export function defaultsFromAnswers(answers: Record<string, ScreeningAnswerValue>): ScreeningDefault[] {
-  return Object.entries(normalizeAnswers(answers)).map(([question, value]) => {
-    if (isNeedsUserAnswer(value)) {
-      return { question, answer: FLAGGED_FOR_USER, flagged: true, needsUser: value };
-    }
-    return { question, answer: value, flagged: false };
-  });
+  return Object.entries(normalizeAnswers(answers))
+    .filter(([question]) => !isAdvisoryQuestion(question))
+    .map(([question, value]) => {
+      if (isNeedsUserAnswer(value)) {
+        return { question, answer: FLAGGED_FOR_USER, flagged: true, needsUser: value };
+      }
+      return { question, answer: value, flagged: false };
+    });
 }
 
 /** Screening answers with no standing store (kept for callers that predate it). */

@@ -8,6 +8,7 @@ import type {
   prepTasks, scheduleEvents, sourceBudgets, taskQueue,
 } from './schema';
 import { normalizeAnswers } from '../docs/screening';
+import { parseAdvisories } from '../docs/advisories';
 
 type JobRow = typeof jobs.$inferSelect;
 type ApplicationRow = typeof applications.$inferSelect;
@@ -71,6 +72,7 @@ export function toApplication(row: ApplicationRow, job?: JobRow | null): Applica
     answers: row.answersJson
       ? normalizeAnswers(parseJson<Record<string, unknown>>(row.answersJson, {}))
       : null,
+    advisories: parseAdvisories(row.advisoriesJson),
     archiveDir: row.archiveDir,
     notes: parseJson<Application['notes']>(row.notesJson, []),
     autoSubmitted: row.autoSubmitted === 1,

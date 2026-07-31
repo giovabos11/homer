@@ -175,10 +175,14 @@ describe('tailor worker (real path, MockRunner)', () => {
     expect(answers['Salary expectations']).toMatchObject({ status: 'needs_user', standingKey: 'salaryExpectation' });
     expect(answers['Earliest start date']).toMatchObject({ status: 'needs_user', standingKey: 'earliestStartDate' });
     expect(JSON.stringify(answers)).not.toContain('FLAGGED_FOR_USER');
-    // Drafter flags surface as flagged entries, never invented answers.
-    const flagKey = Object.keys(answers).find((k) => k.startsWith('FLAG:') && k.includes('Kubernetes'));
-    expect(flagKey).toBeTruthy();
-    expect(answers[flagKey!]).toMatchObject({ status: 'needs_user' });
+    // Drafter flags are NOTES, not questions: they land in advisories, never in
+    // the answers map, and never as something the user has to "answer".
+    expect(Object.keys(answers).some((k) => k.startsWith('FLAG:'))).toBe(false);
+    const advisories = JSON.parse(app.advisoriesJson) as { kind: string; text: string }[];
+    const kubernetes = advisories.find((a) => a.text.includes('Kubernetes'));
+    expect(kubernetes).toBeTruthy();
+    expect(kubernetes!.text.startsWith('FLAG:')).toBe(false);
+    expect(kubernetes!.kind).toBe('gap');
 
     // Upstream-style archive with outcome skeleton; cover letter obeys the no-dashes rule.
     const archive = path.join(repo.root, app.archiveDir!);

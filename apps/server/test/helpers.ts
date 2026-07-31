@@ -127,6 +127,7 @@ export function makeFakeRepo(): { root: string; cleanup(): void } {
       '| Salary expectations | **Do not answer.** Flag the question to the candidate. |',
       '| Earliest start date | **Do not answer.** Not preset; flag to the candidate. |',
       '| Security clearance / citizenship questions | **Do not answer.** Flag to the candidate. |',
+      '| Skills, tools, or experience not in the profile | **Do not answer.** Flag to the candidate; never invent. |',
       '',
     ].join('\n'),
     'utf8',

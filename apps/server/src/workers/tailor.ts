@@ -34,7 +34,8 @@ import {
 import { verifyAtsPdf, type AtsVerifyResult } from '../docs/render';
 import { writeApplicationArchive } from '../docs/archive';
 import { answersResolved as allAnswersResolved, resolveScreeningAnswers, unresolvedQuestions } from '../docs/screening';
-import type { ScreeningAnswerValue } from '@shared/types';
+import { mergeAdvisories, salaryFloorAdvisory, toAdvisory } from '../docs/advisories';
+import type { Advisory, ScreeningAnswerValue } from '@shared/types';
 import { addAudit, ensureApplication, getJob, sleep, updateApplication, updateJob, writePlaceholderPdf, type JobRow } from './helpers';
 import type { Worker, WorkerArgs } from './registry';
 import type { AppContext } from '../context';
@@ -48,7 +49,8 @@ const DRAFT_SCHEMA_DESCRIPTION = [
   '    "education": [{ "school": string, "degree": string, "dates": string, "details": string[] }] },',
   '  "coverLetter": { "addressee": string, "paragraphs": string[] (3-5), "closing": string },',
   '  "keywords": string[] (posting keywords the resume text genuinely covers),',
-  '  "flags": string[] (claims/questions only the candidate can answer — never invented) }',
+  '  "flags": string[] (notes for the candidate: posting requirements the profile does not',
+  '           support, and claims that could not be verified. Never a form question.) }',
 ].join('\n');
 
 const reviewSchema = z.object({
@@ -208,14 +210,19 @@ export const tailorWorker: Worker = {
     let resumePath: string | null = null;
     let coverPath: string | null = null;
     let answers: Record<string, ScreeningAnswerValue> | null = null;
+    let advisories: Advisory[] = [];
     let archiveDir: string | null = null;
     let atsOk = true;
+
+    // The floor is a preference, so a low posted range is a note, never a veto.
+    const floorNote = salaryFloorAdvisory(job, ctx.standing.get());
+    if (floorNote) advisories.push(floorNote);
 
     if (ctx.simulate) {
       await sleep(400);
       resumePath = writePlaceholderPdf(path.join(dir, 'resume.pdf'), `Resume — ${job.company} ${job.title}`);
       coverPath = writePlaceholderPdf(path.join(dir, 'cover-letter.pdf'), `Cover letter — ${job.company}`);
-      answers = resolveScreeningAnswers(ctx.repoRoot, ctx.standing.get());
+      answers = resolveScreeningAnswers(ctx.repoRoot, ctx.standing.get(), job);
       archiveDir = path.join('applications', String(app.id));
     } else {
       const identity = identityFor(ctx);
@@ -257,16 +264,15 @@ export const tailorWorker: Worker = {
       });
 
       // Screening answers: standing answers → 08-application-forms.md defaults
-      // → structured needs-user markers. Nothing is invented at any layer.
-      answers = resolveScreeningAnswers(ctx.repoRoot, ctx.standing.get());
-      for (const flag of draft.flags) {
-        const question = `FLAG: ${flag.slice(0, 160)}`;
-        answers[question] = {
-          status: 'needs_user',
-          question,
-          hint: 'The drafter could not ground this in your profile. Answer it here or leave the application for manual review.',
-        };
-      }
+      // → structured needs-user markers. Nothing is invented at any layer, and
+      // only REAL form questions land in the map.
+      answers = resolveScreeningAnswers(ctx.repoRoot, ctx.standing.get(), job);
+
+      // Drafter/reviewer flags are transparency notes, not questions: they say
+      // what the posting wanted that the profile does not support, and what
+      // could not be verified. They are recorded beside the application so the
+      // user sees them, and they never block approval or auto-submit.
+      advisories = mergeAdvisories(advisories, draft.flags.map(toAdvisory));
 
       // Upstream-style archive (documents/applications/<company>_<role>/).
       archiveDir = writeApplicationArchive(ctx.repoRoot, {
@@ -303,6 +309,7 @@ export const tailorWorker: Worker = {
       resumePath,
       coverLetterPath: coverPath,
       answersJson: answers ? JSON.stringify(answers) : null,
+      advisoriesJson: JSON.stringify(advisories),
       archiveDir,
     });
     addAudit(ctx, app.id, 'tailor.finished', {
@@ -311,6 +318,7 @@ export const tailorWorker: Worker = {
       atsOk,
       answersResolved: resolved,
       unresolved: pending,
+      advisories: advisories.length,
     });
 
     // A failed ATS check always forces human review.

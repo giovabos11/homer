@@ -1,0 +1,13 @@
+-- Advisories: the drafter/reviewer's transparency notes about an application
+-- (profile gaps, unverified claims, compensation and location caveats).
+--
+-- They used to be written into applications.answers_json as
+-- { status: 'needs_user' } markers keyed "FLAG: …", which made every note look
+-- like a screening question the user had to answer: the review modal filled up,
+-- Approve stayed disabled and auto-submit never fired. They are notes, not
+-- questions, so they get their own column and never gate anything.
+--
+-- Existing rows are repaired at boot by migrateApplicationAdvisories() (idempotent):
+-- FLAG-keyed entries and the "Skills, tools, or experience not in the profile"
+-- catch-all move out of answers_json; real answers are left untouched.
+ALTER TABLE applications ADD COLUMN advisories_json TEXT NOT NULL DEFAULT '[]';

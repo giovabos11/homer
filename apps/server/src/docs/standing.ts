@@ -10,7 +10,8 @@
 // same way jobs and applications are wiped. Nothing is ever auto-populated:
 // an unset key stays unset and keeps its question flagged.
 import { eq } from 'drizzle-orm';
-import type { StandingAnswerKey, StandingAnswers } from '@shared/types';
+import type { EnumishStandingKey, StandingAnswerKey, StandingAnswers } from '@shared/types';
+import { STANDING_ANSWER_OPTIONS } from '@shared/types';
 import type { Db } from '../db/client';
 import { standingAnswers } from '../db/schema';
 
@@ -111,4 +112,56 @@ export function standingValue(answers: StandingAnswers, key: StandingAnswerKey):
   const v = (answers as unknown as Record<string, unknown>)[key];
   if (v == null) return '';
   return String(v).trim();
+}
+
+// ---------------------------------------------------------------------------
+// Value normalization — casing must never be an error.
+//
+// The dashboard offers dropdowns for the enum-ish keys, but a typed value has
+// to work too: "No", "no" and "NO" are the same answer, and refusing one of
+// them for its capital letter is a bug, not validation.
+// ---------------------------------------------------------------------------
+
+/** Lowercase, strip punctuation, collapse whitespace — the comparison key. */
+function compareKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+const YES_WORDS = new Set(['yes', 'y', 'true', '1']);
+const NO_WORDS = new Set(['no', 'n', 'false', '0', 'none', 'not required', 'no sponsorship required']);
+
+/**
+ * Any casing or phrasing of yes/no → the stored lowercase value.
+ * '' stays '' (unset). Returns null when the value is neither, so the API can
+ * answer with a real 400 instead of silently storing nonsense.
+ */
+export function normalizeYesNo(raw: string): string | null {
+  const value = raw.trim();
+  if (value === '') return '';
+  const key = compareKey(value);
+  if (YES_WORDS.has(key)) return 'yes';
+  if (NO_WORDS.has(key)) return 'no';
+  if (/^yes\b/i.test(value)) return 'yes';
+  if (/^no\b/i.test(value)) return 'no';
+  return null;
+}
+
+function hasOptions(key: StandingAnswerKey): key is EnumishStandingKey {
+  return key in STANDING_ANSWER_OPTIONS;
+}
+
+/**
+ * Snap a typed value onto its canonical option when it matches one (ignoring
+ * case and punctuation); otherwise keep what the user typed. Free text stays
+ * possible everywhere except `requiresSponsorship`, which the apply driver
+ * matches on and which therefore stays strictly yes/no.
+ */
+export function canonicalizeStandingValue(key: StandingAnswerKey, raw: string): string {
+  const value = raw.trim();
+  if (value === '') return '';
+  if (key === 'requiresSponsorship') return normalizeYesNo(value) ?? value;
+  if (!hasOptions(key)) return value;
+  const wanted = compareKey(value);
+  const match = (STANDING_ANSWER_OPTIONS[key] as readonly string[]).find((o) => compareKey(o) === wanted);
+  return match ?? value;
 }

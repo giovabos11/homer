@@ -500,7 +500,7 @@ export const mockApi: Api = {
         const app: Application = {
           id: nextId++, jobId: job.id, status: 'tailoring', gate: S.settings.gateMode,
           approvedAt: null, submittedAt: null, resumePath: null, coverLetterPath: null,
-          answers: null, archiveDir: null, notes: [], autoSubmitted: false,
+          answers: null, advisories: [], archiveDir: null, notes: [], autoSubmitted: false,
         };
         S.applications.push(app);
         emitApp(app);
@@ -538,7 +538,7 @@ export const mockApi: Api = {
         app = {
           id: nextId++, jobId: id, status: 'tailoring', gate: S.settings.gateMode,
           approvedAt: null, submittedAt: null, resumePath: null, coverLetterPath: null,
-          answers: null, archiveDir: null, notes: [], autoSubmitted: false,
+          answers: null, advisories: [], archiveDir: null, notes: [], autoSubmitted: false,
         };
         S.applications.push(app);
       }
@@ -678,6 +678,7 @@ export const mockApi: Api = {
       coverLetterUrl: mockCoverLetterPdf(j.company, j.title),
       screenshots: [],
       answers: a.answers,
+      advisories: a.advisories,
     };
     return out;
   },

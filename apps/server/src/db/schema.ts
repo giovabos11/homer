@@ -47,6 +47,8 @@ export const applications = sqliteTable(
     resumePath: text('resume_path'),
     coverLetterPath: text('cover_letter_path'),
     answersJson: text('answers_json'),
+    /** Advisory[] — drafting notes. Never questions, never gates anything. */
+    advisoriesJson: text('advisories_json').notNull().default('[]'),
     auditJson: text('audit_json').notNull().default('[]'),
     archiveDir: text('archive_dir'),
     notesJson: text('notes_json').notNull().default('[]'),

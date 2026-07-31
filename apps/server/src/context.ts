@@ -14,6 +14,8 @@ import { TaskQueue } from './queue/queue';
 import { Scheduler } from './queue/scheduler';
 import { SettingsStore } from './settings';
 import { StandingAnswerStore } from './docs/standing';
+import { migrateApplicationAdvisories } from './docs/advisories';
+import { refreshStandingResolvedAnswers } from './docs/answer-refresh';
 import { discoverSkills } from './sources/skills';
 import { ConnectionsMonitor, type Probes } from './connections/monitor';
 import { createVault, type Vault } from './vault';
@@ -82,11 +84,38 @@ export function createContext(options: ContextOptions = {}): AppContext {
   const dbPath = options.dbPath ?? path.join(dataDir, 'app.db');
 
   const handle = openDb(dbPath);
+
+  // One-time repair, idempotent and safe to run on every boot: drafting notes
+  // that older builds wrote into applications.answers_json as "FLAG: …"
+  // needs-user markers move into advisories_json, where they cannot block an
+  // approval. Real answers are untouched.
+  const repaired = migrateApplicationAdvisories(handle.db);
+  if (repaired.changed > 0) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[advisories] moved ${repaired.movedEntries} drafting note(s) out of screening answers ` +
+        `across ${repaired.changed} application(s)`,
+    );
+  }
+
   const bus = new EventBus();
   const settings = new SettingsStore(handle.db, config.settings);
   settings.seed();
 
   const standing = new StandingAnswerStore(handle.db);
+
+  // Applications drafted before a standing answer existed still ask for it.
+  // Re-apply the first resolution layer so the user is never asked twice for
+  // something they have already answered once. Fills from the user's own
+  // values only; never approves or submits.
+  const refreshed = refreshStandingResolvedAnswers(handle.db, standing.get());
+  if (refreshed.changed > 0) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[standing] filled ${refreshed.resolved} question(s) from your standing answers ` +
+        `across ${refreshed.changed} application(s)`,
+    );
+  }
 
   const clock = options.clock ?? (() => Date.now());
   const budgets = new BudgetManager(handle.db, config.budgets.default, config.budgets.perSource, clock);
