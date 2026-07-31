@@ -27,7 +27,30 @@ export const PRIORITY = { user: 10, autoAdvance: 5, bulk: 0 } as const;
 /** lastError marker for user cancellation — bulk retry always skips these. */
 export const CANCELLED_MARKER = 'Cancelled by user';
 
+/** lastError prefix for a duplicate collapsed onto an earlier identical task. */
+export const SUPERSEDED_MARKER = 'Superseded by an earlier identical task';
+
 const ACTIVE_STATES: TaskState[] = ['pending', 'running', 'paused', 'needs_human', 'waiting_session'];
+
+/** What a payload dedupe key is matched against: any subset of payload fields. */
+export type DedupeKey = Record<string, string | number | boolean | null>;
+
+export interface EnqueueUniqueResult {
+  task: TaskRow;
+  /** true → an existing live task was returned; nothing new was inserted. */
+  existing: boolean;
+}
+
+/** True when every field of `key` is present in the stored payload with that value. */
+function payloadMatches(payloadJson: string, key: DedupeKey): boolean {
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(payloadJson) as Record<string, unknown>;
+  } catch {
+    return false; // an unreadable payload can never be proven to be a duplicate
+  }
+  return Object.entries(key).every(([k, v]) => payload[k] === v);
+}
 
 export class TaskQueue {
   private db: Db;
@@ -72,6 +95,55 @@ export class TaskQueue {
       .returning()
       .get();
     return row;
+  }
+
+  /**
+   * The oldest still-live task of `type` whose payload matches every field of
+   * `dedupeKey`. "Live" = anything that still stands to run (pending, running,
+   * paused, needs_human, waiting_session); done/failed/cancelled rows never
+   * block a fresh enqueue, so a retry after a failure always works.
+   */
+  findLive(type: TaskType, dedupeKey: DedupeKey): TaskRow | null {
+    const rows = this.db
+      .select()
+      .from(taskQueue)
+      .where(and(eq(taskQueue.type, type), inArray(taskQueue.state, ACTIVE_STATES)))
+      .orderBy(taskQueue.id)
+      .all();
+    return rows.find((row) => payloadMatches(row.payloadJson, dedupeKey)) ?? null;
+  }
+
+  /**
+   * Enqueue at most ONE live task per (type, dedupeKey) — the single guard that
+   * makes every apply path idempotent. A second "Approve & submit" click, an
+   * auto-submit that races the click, a retry, or the from-url path all land on
+   * the same task instead of stacking duplicates that would each submit the
+   * application to the employer again.
+   *
+   * `dedupeKey` is merged into the payload, so the caller never has to repeat
+   * the identifying fields. Runs in one transaction: the read that decides and
+   * the insert that acts cannot interleave.
+   */
+  enqueueUnique(type: TaskType, dedupeKey: DedupeKey, options: EnqueueOptions = {}): EnqueueUniqueResult {
+    const run = this.sqlite.transaction((): EnqueueUniqueResult => {
+      const existing = this.findLive(type, dedupeKey);
+      if (existing) return { task: existing, existing: true };
+      return {
+        task: this.enqueue(type, { ...options, payload: { ...(options.payload ?? {}), ...dedupeKey } }),
+        existing: false,
+      };
+    });
+    return run();
+  }
+
+  /**
+   * Collapse a duplicate onto the task that already owns the work: terminal
+   * 'done' (not 'failed' — nothing went wrong, and it must never surface in the
+   * failed count or be resurrected by "Retry all failed") with the reason kept
+   * in lastError.
+   */
+  supersede(id: number, keeperId: number): TaskRow {
+    return this.setState(id, 'done', { lastError: `${SUPERSEDED_MARKER} #${keeperId}` });
   }
 
   /**

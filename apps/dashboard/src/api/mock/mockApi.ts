@@ -1,5 +1,5 @@
 import type {
-  Application, Connection, ConnectionName, CredentialMeta, EmailRecord, FeedbackEntry,
+  Application, ApproveResult, Connection, ConnectionName, CredentialMeta, EmailRecord, FeedbackEntry,
   FeedbackKind, Job, JobStatus, PrepTask, QueueTask, ScheduleEvent, Settings, SourceBudget,
   SseEvent, StandingAnswerKey, StandingAnswers, TaskType,
 } from '@shared';
@@ -638,22 +638,64 @@ export const mockApi: Api = {
     return structuredClone(withJob(a));
   },
 
-  async approveApplication(id: number) {
+  // Idempotent like the real endpoint: a second approve returns the task the
+  // first one created instead of queueing another submission.
+  async approveApplication(id: number): Promise<ApproveResult> {
     await delay();
     const a = S.applications.find((x) => x.id === id);
     if (!a) throw new Error('application not found');
     const j = S.jobs.find((x) => x.id === a.jobId);
+    const live = S.tasks.find(
+      (t) => t.type === 'apply' && (t.payload as { applicationId?: number }).applicationId === id
+        && ['pending', 'running', 'needs_human'].includes(t.state),
+    );
+    if (live) {
+      return {
+        taskId: live.id,
+        taskState: live.state,
+        alreadyQueued: true,
+        queuePosition: 0,
+        queuePaused: S.paused,
+        application: structuredClone(withJob(a)),
+      };
+    }
     a.approvedAt = now();
-    toast('info', `Approved — apply driver filling the ${j?.company} form…`);
-    setTimeout(() => {
-      a.status = 'applied';
-      a.submittedAt = now();
-      if (j) j.status = 'applied';
-      a.notes.push({ date: now(), text: 'Submitted by Playwright driver. Confirmation screenshot archived.' });
-      emitApp(a);
-      mockBus.emit({ type: 'toast', level: 'success', message: `Application submitted to ${j?.company ?? 'company'}`, celebrate: true });
-    }, 2000);
-    return { taskId: nextId++ };
+    emitApp(a);
+    const task: QueueTask = {
+      id: nextId++,
+      type: 'apply',
+      state: 'pending',
+      payload: { applicationId: id },
+      cursor: null,
+      priority: 10,
+      runAfter: null,
+      attempts: 0,
+      lastError: null,
+      humanPrompt: null,
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    S.tasks.unshift(task);
+    mockBus.emit({ type: 'queue.updated', task: structuredClone(task) });
+    if (!S.paused) {
+      setTimeout(() => {
+        task.state = 'done';
+        a.status = 'applied';
+        a.submittedAt = now();
+        if (j) j.status = 'applied';
+        a.notes.push({ date: now(), text: 'Submitted by Playwright driver. Confirmation screenshot archived.' });
+        emitApp(a);
+        mockBus.emit({ type: 'toast', level: 'success', message: `Application submitted to ${j?.company ?? 'company'}`, celebrate: true });
+      }, 2000);
+    }
+    return {
+      taskId: task.id,
+      taskState: 'pending',
+      alreadyQueued: false,
+      queuePosition: S.tasks.filter((t) => t.state === 'running' || t.state === 'pending').length - 1,
+      queuePaused: S.paused,
+      application: structuredClone(withJob(a)),
+    };
   },
 
   async rejectApplication(id: number, reason: string) {
@@ -908,6 +950,18 @@ export const mockApi: Api = {
     const offset = params?.offset ?? 0;
     const limit = params?.limit ?? 50;
     return { total, emails: structuredClone(emails.slice(offset, offset + limit)) };
+  },
+
+  async assignEmail(id: number, applicationId: number | null) {
+    await delay();
+    const e = S.emails.find((x) => x.id === id);
+    if (!e) throw new Error('email not found');
+    e.applicationId = applicationId;
+    e.matchBasis = applicationId == null ? null : 'manual';
+    e.matchCandidates = [];
+    const clone = structuredClone(e);
+    mockBus.emit({ type: 'email.received', email: clone });
+    return structuredClone(clone);
   },
 
   async getOutbox() {

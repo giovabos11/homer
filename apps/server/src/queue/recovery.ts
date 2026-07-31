@@ -13,6 +13,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import type { TaskState } from '@shared/types';
 import { applications, jobs, taskQueue } from '../db/schema';
 import { toJob, toQueueTask } from '../db/serialize';
+import type { TaskRow } from './queue';
 import { updateApplication, updateJob } from '../workers/helpers';
 import { autoAdvanceEligible } from '../workers/score';
 import { PRIORITY } from './queue';
@@ -115,6 +116,90 @@ export function backfillAutoAdvance(ctx: AppContext, cap = AUTO_ADVANCE_BACKFILL
   return advanced;
 }
 
+/**
+ * Self-heal duplicate apply tasks (one per application is the invariant).
+ *
+ * Before `enqueueUnique` existed, every "Approve & submit" click enqueued
+ * another apply task; with the queue paused they stacked silently and would
+ * each have driven the employer's form when it resumed. Per application: the
+ * oldest live task keeps the work, every other PENDING one is superseded. A
+ * running task is never touched — it may already have a browser open.
+ */
+export function collapseDuplicateApplyTasks(ctx: AppContext): number {
+  const live = ctx.queue.listByState(ACTIVE_STATES, 'apply');
+  const byApplication = new Map<number, TaskRow[]>();
+  for (const task of [...live].sort((a, b) => a.id - b.id)) {
+    let applicationId: unknown;
+    try {
+      applicationId = (JSON.parse(task.payloadJson) as { applicationId?: unknown }).applicationId;
+    } catch {
+      continue; // unparseable payload → cannot prove it is a duplicate of anything
+    }
+    if (typeof applicationId !== 'number') continue;
+    const group = byApplication.get(applicationId) ?? [];
+    group.push(task);
+    byApplication.set(applicationId, group);
+  }
+
+  let collapsed = 0;
+  for (const [applicationId, group] of byApplication) {
+    if (group.length < 2) continue;
+    const keeper = group[0]!;
+    for (const dup of group.slice(1)) {
+      if (dup.state !== 'pending') continue; // never cancel work already in flight
+      ctx.bus.emit({ type: 'queue.updated', task: toQueueTask(ctx.queue.supersede(dup.id, keeper.id)) });
+      collapsed += 1;
+    }
+    if (collapsed > 0) {
+      console.log(`[recovery] application ${applicationId}: kept apply task #${keeper.id}, collapsed duplicates`);
+    }
+  }
+  if (collapsed > 0) {
+    console.log(`[recovery] collapsed ${collapsed} duplicate pending apply task(s)`);
+    ctx.bus.emit({
+      type: 'toast',
+      level: 'info',
+      message: `Collapsed ${collapsed} duplicate apply task${collapsed === 1 ? '' : 's'} — each application submits once`,
+    });
+  }
+  return collapsed;
+}
+
+/**
+ * A job title that is actually a search query. A portal search once received a
+ * regex lifted out of `search-queries.md` and stored the pattern itself as the
+ * posting title ("/^Full-?stack Engineer$/i" at Better Stack). Those rows are
+ * not real postings, so they are skipped with the reason recorded — never
+ * deleted, because the row is the evidence of how it got in.
+ */
+export function isQueryShapedTitle(title: string): boolean {
+  const t = title.trim();
+  if (t === '') return false;
+  return (
+    /^\/.*\/[gimsuy]*$/.test(t) ||        // /^Full-?stack Engineer$/i
+    t.includes('/^') || t.includes('$/') || // fragments of one
+    /\s-(?:Senior|Staff|Principal|Lead|Manager|Director|Architect)\b/i.test(t) || // negative keywords
+    /\b(?:site|intitle|inurl):/i.test(t) ||  // search operators
+    /\s(?:OR|AND)\s.*["()]/.test(t)          // boolean query syntax
+  );
+}
+
+/** Marks query-shaped job titles as skipped, with the reason kept on the row. */
+export function skipQueryShapedJobs(ctx: AppContext): number {
+  const candidates = ctx.db.select().from(jobs).all().filter((j) => j.status !== 'skipped' && isQueryShapedTitle(j.title));
+  for (const j of candidates) {
+    const reasons = JSON.parse(j.legitReasonsJson) as string[];
+    reasons.push('[cleanup: the title is a search query, not a posting — skipped, never applied to]');
+    const row = updateJob(ctx, j.id, { status: 'skipped', legitReasonsJson: JSON.stringify(reasons) });
+    ctx.bus.emit({ type: 'job.scored', job: toJob(row) });
+    console.log(`[recovery] skipped job ${j.id} — query-shaped title ${JSON.stringify(j.title)}`);
+  }
+  if (candidates.length > 0) {
+    console.log(`[recovery] skipped ${candidates.length} job(s) whose title is a search query`);
+  }
+  return candidates.length;
+}
+
 /** One-time repair: jobs skipped-with-scam-verdict become quarantined (findable). */
 export function repairQuarantinedStatuses(ctx: AppContext): number {
   const rows = ctx.db
@@ -137,7 +222,9 @@ export function runStartupRecovery(ctx: AppContext): void {
   try {
     reclaimStaleTasks(ctx, 0);
     recoverStuckTailoringJobs(ctx);
+    collapseDuplicateApplyTasks(ctx);
     repairQuarantinedStatuses(ctx);
+    skipQueryShapedJobs(ctx);
     backfillAutoAdvance(ctx);
   } catch (err) {
     console.error('[recovery] startup recovery failed:', err);
@@ -150,6 +237,7 @@ export function startZombieSweep(ctx: AppContext): () => void {
     try {
       reclaimStaleTasks(ctx, STALE_CLAIM_MS);
       recoverStuckTailoringJobs(ctx);
+      collapseDuplicateApplyTasks(ctx);
       backfillAutoAdvance(ctx);
     } catch (err) {
       console.error('[recovery] zombie sweep failed:', err);

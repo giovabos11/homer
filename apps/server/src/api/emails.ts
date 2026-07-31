@@ -2,8 +2,9 @@
 import { Router } from 'express';
 import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
-import { emails } from '../db/schema';
+import { applications, emails } from '../db/schema';
 import { toEmail } from '../db/serialize';
+import { applyClassificationEffect, EMAIL_CLASSIFICATIONS } from '../workers/email-intake';
 import { PRIORITY } from '../queue/queue';
 import type { AppContext } from '../context';
 import { ApiError, idParam, parseBody, parseQuery } from './util';
@@ -15,9 +16,7 @@ export function emailRoutes(ctx: AppContext): Router {
     const q = parseQuery(
       z.object({
         direction: z.enum(['inbound', 'outbound']).optional(),
-        classification: z
-          .enum(['reply_accepted', 'reply_rejected', 'interview_invite', 'opportunity', 'followup', 'other'])
-          .optional(),
+        classification: z.enum(EMAIL_CLASSIFICATIONS).optional(),
         limit: z.coerce.number().int().min(1).max(500).default(50),
         offset: z.coerce.number().int().min(0).default(0),
       }),
@@ -37,6 +36,45 @@ export function emailRoutes(ctx: AppContext): Router {
       .offset(q.offset)
       .all();
     res.json({ total, emails: rows.map(toEmail) });
+  });
+
+  /**
+   * "This email is about that application." The scan refuses to guess when two
+   * applications at one employer fit equally well; this is how the user
+   * resolves it, and the status update the scan would have made lands now.
+   * `applicationId: null` unlinks an email that was linked wrongly.
+   */
+  router.patch('/emails/:id', (req, res) => {
+    const id = idParam(req);
+    const body = parseBody(z.object({ applicationId: z.number().int().positive().nullable() }), req);
+    const existing = ctx.db.select().from(emails).where(eq(emails.id, id)).get();
+    if (!existing) throw new ApiError(404, 'not_found', `No email ${id}`);
+    if (existing.direction !== 'inbound') {
+      throw new ApiError(409, 'invalid_state', `Email ${id} is outbound — only inbound email links to an application`);
+    }
+
+    let target: { appId: number; jobId: number } | null = null;
+    if (body.applicationId != null) {
+      const app = ctx.db.select().from(applications).where(eq(applications.id, body.applicationId)).get();
+      if (!app) throw new ApiError(404, 'not_found', `No application ${body.applicationId}`);
+      target = { appId: app.id, jobId: app.jobId };
+    }
+
+    const row = ctx.db
+      .update(emails)
+      .set({
+        applicationId: body.applicationId,
+        matchBasis: body.applicationId == null ? null : 'manual',
+        matchCandidatesJson: '[]', // the question is answered; stop asking it
+      })
+      .where(eq(emails.id, id))
+      .returning()
+      .get();
+    if (target) applyClassificationEffect(ctx, existing.classification, target);
+
+    const dto = toEmail(row);
+    ctx.bus.emit({ type: 'email.received', email: dto });
+    res.json(dto);
   });
 
   // Outbox = outbound drafts awaiting approval (FR-11: nothing sends without one).

@@ -1,40 +1,102 @@
 import { useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  CalendarPlus, Check, ChevronDown, Clock, Inbox as InboxIcon, Mail, MailQuestion,
+  CalendarPlus, Check, ChevronDown, Clock, HelpCircle, Inbox as InboxIcon, Mail, MailQuestion,
   RefreshCw, Send, Sparkles, ThumbsDown, ThumbsUp, X,
 } from 'lucide-react';
 import type { EmailRecord } from '@shared';
 import { api } from '@/api/client';
 import { useStore } from '@/store/useStore';
-import { fmtRelative } from '@/lib/format';
+import { fmtRelative, STATUS_LABEL } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Card, CardHeader, EmptyState, PageHeader } from '@/components/common/layout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/controls';
+import { Tabs, TabsList, TabsTrigger, Tip } from '@/components/ui/controls';
 import { Markdown } from '@/components/common/Markdown';
 
 type ReplyTab = 'all' | 'accepted' | 'rejected' | 'neutral';
 
-const CLASS_META: Record<string, { label: string; variant: 'good' | 'critical' | 'accent' | 'violet' | 'default' }> = {
+const CLASS_META: Record<string, { label: string; variant: 'good' | 'critical' | 'accent' | 'violet' | 'default' | 'warn' }> = {
   reply_accepted: { label: 'Accepted', variant: 'good' },
   interview_invite: { label: 'Interview invite', variant: 'good' },
+  offer: { label: 'Offer', variant: 'good' },
   reply_rejected: { label: 'Rejected', variant: 'critical' },
   opportunity: { label: 'Opportunity', variant: 'violet' },
   followup: { label: 'Follow-up', variant: 'accent' },
   other: { label: 'Update', variant: 'default' },
 };
 
+/** Plain-language reason the email is attached where it is. */
+const MATCH_BASIS_LABEL: Record<string, string> = {
+  url: 'Linked by the posting URL — the strongest match there is.',
+  company_title: 'Linked by company and job title.',
+  company: 'Linked by company name — the only application at this employer.',
+  manual: 'You linked this email to the application.',
+};
+
 function tabOf(e: EmailRecord): ReplyTab {
-  if (e.classification === 'reply_accepted' || e.classification === 'interview_invite') return 'accepted';
+  if (e.classification === 'reply_accepted' || e.classification === 'interview_invite' || e.classification === 'offer') {
+    return 'accepted';
+  }
   if (e.classification === 'reply_rejected') return 'rejected';
   return 'neutral';
+}
+
+/**
+ * An email that fits two applications equally well is not attached to either —
+ * a rejection landing on the wrong role closes it for good. The candidates are
+ * shown as the only thing to do about it.
+ */
+function ApplicationPicker({ email }: { email: EmailRecord }) {
+  const pushToast = useStore((s) => s.pushToast);
+  const [busy, setBusy] = useState<number | null>(null);
+
+  const assign = async (applicationId: number, label: string) => {
+    setBusy(applicationId);
+    try {
+      await api.assignEmail(email.id, applicationId);
+      pushToast('success', `Linked to ${label}`);
+    } catch (err) {
+      pushToast('error', `Could not link the email: ${err instanceof Error ? err.message : 'unknown error'}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="mx-4 mb-3 rounded-lg border border-warn-raw/35 bg-warn-raw/8 px-3.5 py-3">
+      <p className="text-xs font-medium text-ink flex items-center gap-1.5">
+        <HelpCircle className="h-3.5 w-3.5 text-warn shrink-0" />
+        Which application is this about?
+      </p>
+      <p className="text-[11px] text-ink-3 mt-1 leading-relaxed">
+        {email.matchCandidates.length} applications at this employer fit equally well, so nothing was updated yet.
+      </p>
+      <div className="mt-2.5 flex flex-wrap gap-2">
+        {email.matchCandidates.map((c) => (
+          <button
+            key={c.applicationId}
+            type="button"
+            disabled={busy != null}
+            onClick={() => void assign(c.applicationId, `${c.company} — ${c.title}`)}
+            className="rounded-lg border border-line-strong bg-raised px-2.5 py-1.5 text-left hover:border-accent/60 transition-colors cursor-pointer disabled:opacity-60"
+          >
+            <span className="block text-[12px] font-medium text-ink leading-snug">{c.title}</span>
+            <span className="block text-[11px] text-ink-3 mt-0.5">
+              {c.company} · {STATUS_LABEL[c.status] ?? c.status}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function ReplyRow({ email, jobName }: { email: EmailRecord; jobName: string | null }) {
   const [open, setOpen] = useState(false);
   const meta = CLASS_META[email.classification] ?? CLASS_META.other!;
+  const needsPick = email.applicationId == null && email.matchCandidates.length > 0;
   return (
     <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="border-b border-line/70 last:border-0">
       <button onClick={() => setOpen((v) => !v)} className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-overlay/50 transition-colors cursor-pointer">
@@ -52,11 +114,17 @@ function ReplyRow({ email, jobName }: { email: EmailRecord; jobName: string | nu
           <p className="text-xs text-ink-3 mt-0.5 line-clamp-2 leading-relaxed">{email.summary}</p>
           <div className="flex items-center gap-2 mt-1 text-[11px] text-ink-3">
             <span>{fmtRelative(email.receivedAt)}</span>
-            {jobName && <span className="text-ink-3/80">· {jobName}</span>}
+            {jobName && (
+              <Tip label={MATCH_BASIS_LABEL[email.matchBasis ?? ''] ?? 'Linked to this application.'}>
+                <span className="text-ink-3/80 cursor-default">· {jobName}</span>
+              </Tip>
+            )}
+            {needsPick && <Badge variant="warn">Needs linking</Badge>}
           </div>
         </div>
         <ChevronDown className={cn('h-4 w-4 text-ink-3 mt-1 transition-transform shrink-0', open && 'rotate-180')} />
       </button>
+      {needsPick && <ApplicationPicker email={email} />}
       <AnimatePresence>
         {open && email.bodyMd && (
           <motion.div

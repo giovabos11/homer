@@ -6,11 +6,22 @@ import type {
 } from '@shared';
 import { api } from '@/api/client';
 
+/**
+ * One optional control on a toast, for the case where the message would
+ * otherwise leave the user stuck: "approved, but the queue is paused" needs a
+ * Resume queue button right there, not a hunt for the pause toggle.
+ */
+export interface ToastAction {
+  label: string;
+  run: () => void | Promise<void>;
+}
+
 export interface Toast {
   id: number;
   level: 'info' | 'success' | 'warning' | 'error';
   message: string;
   celebrate?: boolean;
+  action?: ToastAction;
 }
 
 export interface AskSession {
@@ -80,7 +91,7 @@ interface StoreState {
   refreshQueue(): Promise<void>;
   setSseConnected(v: boolean): void;
   applyEvent(e: SseEvent): void;
-  pushToast(level: Toast['level'], message: string, celebrate?: boolean): void;
+  pushToast(level: Toast['level'], message: string, celebrate?: boolean, action?: ToastAction): void;
   dismissToast(id: number): void;
   beginSearch(id: string): void;
   endSearch(): void;
@@ -308,9 +319,9 @@ export const useStore = create<StoreState>((set, get) => ({
     }
   },
 
-  pushToast(level, message, celebrate) {
+  pushToast(level, message, celebrate, action) {
     const id = toastSeq++;
-    set((prev) => ({ toasts: [...prev.toasts.slice(-4), { id, level, message, celebrate }] }));
+    set((prev) => ({ toasts: [...prev.toasts.slice(-4), { id, level, message, celebrate, action }] }));
   },
   dismissToast(id) {
     set((prev) => ({ toasts: prev.toasts.filter((t) => t.id !== id) }));

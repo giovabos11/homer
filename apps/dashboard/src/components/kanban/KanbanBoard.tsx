@@ -4,10 +4,14 @@ import {
   type DragEndEvent, type DragStartEvent,
 } from '@dnd-kit/core';
 import { AnimatePresence, motion } from 'motion/react';
-import { Clock, Eye, GripVertical, Inbox, Zap } from 'lucide-react';
+import {
+  AlertTriangle, CheckCircle2, Clock, Eye, GripVertical, Inbox, Loader2, PauseCircle, XCircle, Zap,
+  type LucideIcon,
+} from 'lucide-react';
 import type { Application, Job, JobStatus } from '@shared';
 import { api } from '@/api/client';
 import { useStore } from '@/store/useStore';
+import { applyState, type ApplyPhase, type ApplyState } from '@/lib/applyState';
 import { celebrate } from '@/lib/celebrate';
 import { salaryLabel, STATUS_LABEL } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -45,11 +49,68 @@ const COLUMNS: Column[] = [
 
 const CELEBRATE_ON: JobStatus[] = ['applied', 'offer'];
 
+/**
+ * What an approved application shows in place of the Approve button. It is
+ * deliberately not a button: the decision is made, and the only honest thing
+ * left to do is report where the submission is — including "paused", which is
+ * the one phase that needs a way out, so it carries a Resume queue control.
+ */
+function ApprovedIndicator({ state, onResume, resuming }: { state: ApplyState; onResume: () => void; resuming: boolean }) {
+  const TONE: Record<ApplyPhase, { icon: LucideIcon; className: string }> = {
+    running: { icon: Loader2, className: 'border-good/30 bg-good/10 text-good-text' },
+    queued: { icon: CheckCircle2, className: 'border-accent/25 bg-accent/10 text-accent' },
+    approved: { icon: CheckCircle2, className: 'border-accent/25 bg-accent/10 text-accent' },
+    paused: { icon: PauseCircle, className: 'border-warn-raw/30 bg-warn-raw/10 text-warn' },
+    needs_you: { icon: AlertTriangle, className: 'border-warn-raw/30 bg-warn-raw/10 text-warn' },
+    failed: { icon: XCircle, className: 'border-critical/30 bg-critical/10 text-critical' },
+  };
+  const { icon: Icon, className } = TONE[state.phase];
+  return (
+    <div className={cn('rounded-md border px-2 py-1.5', className)}>
+      <Tip label={state.detail}>
+        <span className="flex items-center gap-1.5 text-[11px] font-medium leading-4">
+          <Icon className={cn('h-3.5 w-3.5 shrink-0', state.phase === 'running' && 'animate-spin')} />
+          {state.label}
+        </span>
+      </Tip>
+      {state.phase === 'paused' && (
+        <button
+          type="button"
+          disabled={resuming}
+          onClick={onResume}
+          className="mt-1.5 w-full rounded border border-warn-raw/40 bg-raised/60 px-2 py-1 text-[11px] font-medium text-ink hover:border-warn-raw/70 transition-colors cursor-pointer disabled:opacity-60"
+        >
+          {resuming ? 'Resuming…' : 'Resume queue'}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function KanbanCard({ job, app, dragging, queued }: { job: Job; app?: Application; dragging?: boolean; queued?: boolean }) {
   const openDrawer = useJobDrawer((s) => s.open);
+  const tasks = useStore((s) => s.tasks);
+  const queuePaused = useStore((s) => s.queuePaused);
+  const pushToast = useStore((s) => s.pushToast);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const salary = salaryLabel(job);
-  const isReview = job.status === 'ready_for_review' && app;
+  // Approval is the fork: before it, the card offers review; after it, the card
+  // reports. It never shows both, and it never silently shows neither.
+  const submission = app ? applyState(app, tasks, queuePaused) : null;
+  const isReview = job.status === 'ready_for_review' && app && !submission;
+
+  const resumeQueue = async () => {
+    setResuming(true);
+    try {
+      await api.resumeQueue();
+      pushToast('success', 'Queue resumed — approved applications start submitting');
+    } catch (err) {
+      pushToast('error', `Could not resume the queue: ${err instanceof Error ? err.message : 'unknown error'}`);
+    } finally {
+      setResuming(false);
+    }
+  };
 
   return (
     <div
@@ -101,6 +162,11 @@ function KanbanCard({ job, app, dragging, queued }: { job: Job; app?: Applicatio
             <Eye className="h-3.5 w-3.5" /> Review drafts & approve
           </Button>
           <ReviewDialog app={app} job={job} open={reviewOpen} onOpenChange={setReviewOpen} />
+        </div>
+      )}
+      {submission && (
+        <div className="mt-2 pt-2 border-t border-line/70" onClick={(e) => e.stopPropagation()}>
+          <ApprovedIndicator state={submission} onResume={() => void resumeQueue()} resuming={resuming} />
         </div>
       )}
     </div>

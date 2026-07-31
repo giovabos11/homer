@@ -15,7 +15,9 @@ import {
 } from '../docs/screening';
 import { isAdvisoryQuestion, parseAdvisories } from '../docs/advisories';
 import { STANDING_ANSWER_KEYS } from '../docs/standing';
-import type { ScreeningAnswerValue, StandingAnswerKey, StandingAnswers } from '@shared/types';
+import type {
+  ApproveResult, ScreeningAnswerValue, StandingAnswerKey, StandingAnswers, TaskState,
+} from '@shared/types';
 import type { AppContext } from '../context';
 import { ApiError, idParam, parseBody, parseQuery } from './util';
 
@@ -143,11 +145,22 @@ export function applicationRoutes(ctx: AppContext): Router {
     });
   });
 
-  // FR-9/D1: the user approval click at the submit gate.
+  /**
+   * FR-9/D1: the user approval click at the submit gate.
+   *
+   * Idempotent by construction. A double click, a re-opened dialog, or a retry
+   * must never stack a second `apply` task: each one would drive the employer's
+   * form again, and an extra submission cannot be taken back. `enqueueUnique`
+   * returns the task the first approval created, so the response carries the
+   * same taskId every time and the dashboard shows one queued submission.
+   */
   router.post('/applications/:id/approve', (req, res) => {
     const id = idParam(req);
     const existing = ctx.db.select().from(applications).where(eq(applications.id, id)).get();
     if (!existing) throw new ApiError(404, 'not_found', `No application ${id}`);
+    if (existing.submittedAt) {
+      throw new ApiError(409, 'already_submitted', `Application ${id} was already submitted on ${existing.submittedAt}`);
+    }
     if (existing.status !== 'ready_for_review') {
       throw new ApiError(409, 'invalid_state', `Application ${id} is ${existing.status}, not ready_for_review`);
     }
@@ -162,10 +175,29 @@ export function applicationRoutes(ctx: AppContext): Router {
         `${pending.length} screening question(s) still need your answer: ${pending.slice(0, 3).join('; ')}`,
       );
     }
-    updateApplication(ctx, id, { approvedAt: new Date().toISOString() });
-    addAudit(ctx, id, 'gate.user_approved', {});
-    const task = ctx.queue.enqueue('apply', { priority: PRIORITY.user, payload: { applicationId: id } });
-    res.json({ taskId: task.id });
+
+    const { task, existing: alreadyQueued } = ctx.queue.enqueueUnique(
+      'apply',
+      { applicationId: id },
+      { priority: PRIORITY.user },
+    );
+    // The first approval owns the timestamp and the audit line; a replay leaves
+    // both alone so the trail keeps saying when the user actually decided.
+    const row = existing.approvedAt
+      ? existing
+      : updateApplication(ctx, id, { approvedAt: new Date().toISOString() });
+    if (!existing.approvedAt) addAudit(ctx, id, 'gate.user_approved', { taskId: task.id });
+
+    const job = ctx.db.select().from(jobs).where(eq(jobs.id, existing.jobId)).get();
+    const result: ApproveResult = {
+      taskId: task.id,
+      taskState: task.state as TaskState,
+      alreadyQueued,
+      queuePosition: ctx.queue.positionOf(task.id),
+      queuePaused: ctx.queue.isPaused(),
+      application: toApplication(row, job),
+    };
+    res.json(result);
   });
 
   // Reject at the gate: back to tailoring (retailor: true) or skipped (default).

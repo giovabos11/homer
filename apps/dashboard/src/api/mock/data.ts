@@ -290,7 +290,10 @@ export const BUDGETS: SourceBudget[] = [
 // ---------------------------------------------------------------------------
 // Emails
 // ---------------------------------------------------------------------------
-export const EMAILS: EmailRecord[] = [
+// Written without the match fields, which are then filled in below — every
+// linked email in the demo was matched on company, and the two rows that
+// exercise the offer and ambiguous states are appended after.
+const LINKED_EMAILS: Omit<EmailRecord, 'matchBasis' | 'matchCandidates'>[] = [
   {
     id: 1, threadKey: 'datadog-1', direction: 'inbound', classification: 'interview_invite', applicationId: 10,
     subject: 'Datadog — Technical Interview Invitation',
@@ -361,6 +364,34 @@ export const EMAILS: EmailRecord[] = [
     summary: 'Reply confirming tomorrow 2:00 PM CT. Approved and sent.',
     bodyMd: 'Hi Sarah,\n\nThank you — tomorrow at 2:00 PM CT works perfectly. Looking forward to meeting the team.\n\nBest,\nGiovanni',
     needsApproval: false, approvedAt: daysAgo(4, 8), sentAt: daysAgo(4, 8), receivedAt: null,
+  },
+];
+
+export const EMAILS: EmailRecord[] = [
+  ...LINKED_EMAILS.map((e) => ({
+    ...e,
+    matchBasis: e.direction === 'inbound' && e.applicationId != null ? ('company' as const) : null,
+    matchCandidates: [],
+  })),
+  {
+    id: 11, threadKey: 'notion-offer-1', direction: 'inbound', classification: 'offer', applicationId: 12,
+    subject: 'Notion — Your offer',
+    summary: 'Written offer for Software Engineer, Product. [offer: compensation $172,000 base + equity; start September 8; respond by ' + inDays(6, 17).slice(0, 10) + ']',
+    bodyMd: 'Giovanni,\n\nWe are delighted to formally offer you the **Software Engineer, Product** role.\n\n**Base:** $172,000 · **Equity:** 0.035% · **Start:** September 8\n\nPlease let us know your decision within the week. The signed letter is attached.\n\n— Notion Talent',
+    needsApproval: false, approvedAt: null, sentAt: null, receivedAt: daysAgo(0, 9),
+    matchBasis: 'company_title', matchCandidates: [],
+  },
+  {
+    id: 12, threadKey: 'cloudflare-ambiguous', direction: 'inbound', classification: 'reply_rejected', applicationId: null,
+    subject: 'Update on your Cloudflare application',
+    summary: 'Rejection that names no role — two Cloudflare applications are open, so nothing was updated.',
+    bodyMd: 'Hi Giovanni,\n\nThank you for your interest in Cloudflare. After review we have decided not to move forward at this time.\n\n— Cloudflare Recruiting',
+    needsApproval: false, approvedAt: null, sentAt: null, receivedAt: daysAgo(1, 11),
+    matchBasis: null,
+    matchCandidates: [
+      { applicationId: 11, jobId: 11, company: 'Cloudflare', title: 'Systems Engineer, Edge', status: 'interview' },
+      { applicationId: 14, jobId: 14, company: 'Cloudflare', title: 'Software Engineer, Workers', status: 'applied' },
+    ],
   },
 ];
 

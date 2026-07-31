@@ -89,10 +89,19 @@ export const applyWorker: Worker = {
     const job = getJob(ctx, app.jobId);
     if (!job) return;
 
+    // Last line of defence against a double submission. Dedupe at the enqueue
+    // sites keeps duplicates from ever being created; this catches the ones
+    // that predate the guard (or a task requeued after the submission landed).
+    // Checked BEFORE the approval record so it stays a clean no-op, not a
+    // failure that retries forever.
+    if (app.submittedAt) {
+      addAudit(ctx, app.id, 'apply.skipped_already_submitted', { taskId: task.id, submittedAt: app.submittedAt });
+      console.log(`[apply] task ${task.id}: application ${app.id} was already submitted — no-op`);
+      return;
+    }
     if (!app.approvedAt) {
       throw new Error(`Application ${app.id} has no approval record — the submit gate must run first`);
     }
-    if (app.submittedAt) return; // idempotent: never double-submit
 
     const settings = ctx.settings.get();
     const now = new Date();

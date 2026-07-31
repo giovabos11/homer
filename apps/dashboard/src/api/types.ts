@@ -1,6 +1,6 @@
 import type {
-  Advisory, Application, Connection, ConnectionName, CredentialMeta, EmailRecord, FeedbackEntry,
-  FeedbackKind, Job, JobStatus, PrepTask, QueueTask, RemoteType, ScheduleEvent,
+  Advisory, Application, ApproveResult, Connection, ConnectionName, CredentialMeta, EmailRecord,
+  FeedbackEntry, FeedbackKind, Job, JobStatus, PrepTask, QueueTask, RemoteType, ScheduleEvent,
   ScheduleNextRuns, ScreeningAnswerValue, Settings, SkillProgress, SourceBudget,
   StandingAnswerKey, StandingAnswers, TaskType, UserProfile,
 } from '@shared';
@@ -98,7 +98,7 @@ export interface Api {
   // applications
   getApplications(params?: { status?: string; q?: string; limit?: number; offset?: number }): Promise<{ total: number; applications: Application[] }>;
   patchApplication(id: number, body: { status?: JobStatus; notes?: string }): Promise<Application>;
-  approveApplication(id: number): Promise<{ taskId: number }>;
+  approveApplication(id: number): Promise<ApproveResult>;
   rejectApplication(id: number, reason: string): Promise<Application>;
   getApplicationArtifacts(id: number): Promise<ApplicationArtifacts>;
   patchApplicationAnswers(
@@ -125,6 +125,8 @@ export interface Api {
   retryFailed(type?: TaskType): Promise<{ requeued: number }>;
   // emails
   getEmails(params?: { direction?: string; classification?: string; limit?: number; offset?: number }): Promise<{ total: number; emails: EmailRecord[] }>;
+  /** Link an inbound email to an application (or unlink with null). */
+  assignEmail(id: number, applicationId: number | null): Promise<EmailRecord>;
   getOutbox(): Promise<EmailRecord[]>;
   approveOutbox(id: number): Promise<EmailRecord>;
   rejectOutbox(id: number, reason?: string): Promise<EmailRecord>;

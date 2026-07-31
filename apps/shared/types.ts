@@ -16,7 +16,28 @@ export type TaskType =
 /** Claude model alias for a task family. 'default' = whatever the user's Claude Code defaults to. */
 export type ModelChoice = 'default' | 'haiku' | 'sonnet' | 'opus';
 export type EmailDirection = 'inbound' | 'outbound';
-export type EmailClass = 'reply_accepted' | 'reply_rejected' | 'interview_invite' | 'opportunity' | 'followup' | 'other';
+/**
+ * `offer` is distinct from `reply_accepted` on purpose: a formal offer (comp,
+ * start date, a deadline to respond) moves the application to Offer, while a
+ * positive interim reply only moves it to Interview. Without the distinction an
+ * offer email read as "moving forward" and the Offer column could never fill.
+ * `hired` and `offer_declined` stay user actions and are never auto-proposed.
+ */
+export type EmailClass =
+  | 'reply_accepted' | 'reply_rejected' | 'interview_invite' | 'offer'
+  | 'opportunity' | 'followup' | 'other';
+
+/** Strongest signal that linked an inbound email to an application. */
+export type EmailMatchBasis = 'url' | 'company_title' | 'company' | 'manual';
+
+/** One application an ambiguous email might be about, offered as a choice. */
+export interface EmailMatchCandidate {
+  applicationId: number;
+  jobId: number;
+  company: string;
+  title: string;
+  status: JobStatus;
+}
 export type ConnectionName =
   | 'server' | 'claude_code' | 'gmail' | 'playwright' | 'chrome'
   | 'ats_boards' | 'remoteok' | 'remotive' | 'weworkremotely' | 'hn_hiring'
@@ -217,6 +238,30 @@ export interface Application {
   autoSubmitted: boolean;
 }
 
+/**
+ * Result of `POST /api/applications/:id/approve` (FR-9/D1).
+ *
+ * Approving is idempotent: a second click returns the apply task the first one
+ * created rather than enqueueing another (submitting the same application to
+ * the employer twice is unrecoverable). Everything the card and the toast need
+ * to say what actually happens next rides along, including whether the queue is
+ * paused — approval succeeding while nothing can run is the exact confusion
+ * this shape exists to remove.
+ */
+export interface ApproveResult {
+  /** The apply task that owns this submission — the same id on every replay. */
+  taskId: number;
+  taskState: TaskState;
+  /** true → an apply task already existed; no new one was enqueued. */
+  alreadyQueued: boolean;
+  /** Tasks ahead of this one; 0 = next up. */
+  queuePosition: number;
+  /** Global pause flag: approved work sits still until the queue resumes. */
+  queuePaused: boolean;
+  /** The application after approval, so the card can update without a refetch. */
+  application: Application;
+}
+
 export interface QueueTask {
   id: number;
   type: TaskType;
@@ -262,6 +307,10 @@ export interface EmailRecord {
   approvedAt: string | null;
   sentAt: string | null;
   receivedAt: string | null;
+  /** Why this email is linked where it is; null when nothing linked it. */
+  matchBasis: EmailMatchBasis | null;
+  /** Non-empty only when matching was ambiguous — the Inbox asks which one. */
+  matchCandidates: EmailMatchCandidate[];
 }
 
 export interface ScheduleEvent {

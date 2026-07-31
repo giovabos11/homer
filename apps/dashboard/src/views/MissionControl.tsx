@@ -8,6 +8,7 @@ import {
 import type { QueueTask } from '@shared';
 import { api } from '@/api/client';
 import { useStore } from '@/store/useStore';
+import { awaitingSubmission } from '@/lib/applyState';
 import { computeStreak, computeXp } from '@/lib/xp';
 import { humanizeTask } from '@/lib/tasks';
 import { fmtRelative, fmtTime, titleCase } from '@/lib/format';
@@ -24,6 +25,9 @@ function TaskDetailRow({ t }: { t: QueueTask }) {
   const jobs = useStore((s) => s.jobs);
   const applications = useStore((s) => s.applications);
   const cancelled = t.state === 'failed' && t.lastError === 'Cancelled by user';
+  // A collapsed duplicate is 'done' but never ran — "Done" next to "Submitting
+  // application" would read as a submission that happened.
+  const superseded = t.state === 'done' && (t.lastError ?? '').startsWith('Superseded by an earlier identical task');
   const stateTone =
     t.state === 'running' ? 'var(--good)'
       : t.state === 'needs_human' ? 'var(--warn-raw)'
@@ -38,9 +42,11 @@ function TaskDetailRow({ t }: { t: QueueTask }) {
       />
       <span className="text-ink-2 truncate flex-1">{humanizeTask(t, jobs, applications)}</span>
       <span className="text-[10px] text-ink-3 tabular shrink-0">{fmtRelative(t.updatedAt)}</span>
-      <Badge variant={cancelled ? 'default' : t.state === 'failed' ? 'critical' : t.state === 'needs_human' ? 'warn' : 'default'}>
-        {cancelled ? 'Stopped' : titleCase(t.state)}
-      </Badge>
+      <Tip label={superseded ? 'A duplicate of an earlier apply task — collapsed so this application submits once.' : (t.lastError ?? titleCase(t.state))}>
+        <Badge variant={cancelled || superseded ? 'default' : t.state === 'failed' ? 'critical' : t.state === 'needs_human' ? 'warn' : 'default'}>
+          {cancelled ? 'Stopped' : superseded ? 'Duplicate' : titleCase(t.state)}
+        </Badge>
+      </Tip>
       {t.state === 'running' && (
         <Tip label="Stop this task">
           <Button size="icon-sm" variant="ghost" aria-label="Stop task" onClick={() => void api.cancelTask(t.id)}>
@@ -79,6 +85,10 @@ function CurrentTaskStrip() {
   const needsHuman = tasks.filter((t) => t.state === 'needs_human').length;
   const failed = tasks.filter((t) => t.state === 'failed' && t.lastError !== 'Cancelled by user');
   const pending = tasks.filter((t) => t.state === 'pending').length;
+  // Approved at the gate, not yet submitted. Counted separately from raw
+  // pending tasks because these are decisions the user already made — while
+  // the queue is paused they are the clearest evidence that it is paused.
+  const approvedWaiting = awaitingSubmission(applications).length;
   const current = running[0];
   const recent = [...tasks]
     .filter((t) => t.state !== 'running')
@@ -86,7 +96,9 @@ function CurrentTaskStrip() {
     .slice(0, 8);
 
   const label = paused
-    ? 'Queue paused — nothing will run'
+    ? approvedWaiting > 0
+      ? `Queue paused — ${approvedWaiting} approved application${approvedWaiting === 1 ? '' : 's'} waiting to submit`
+      : 'Queue paused — nothing will run'
     : current
       ? humanizeTask(current, jobs, applications)
       : `Queue idle${nextRuns?.discover ? ` — next discovery at ${fmtTime(nextRuns.discover)}` : ''}`;
@@ -127,6 +139,11 @@ function CurrentTaskStrip() {
       </button>
       {needsHuman > 0 && <Badge variant="warn">{needsHuman} need{needsHuman === 1 ? 's' : ''} you</Badge>}
       {failed.length > 0 && <Badge variant="critical">{failed.length} failed</Badge>}
+      {approvedWaiting > 0 && (
+        <Tip label={paused ? 'Approved at the review gate and queued. Resume the queue to submit them.' : 'Approved at the review gate, waiting for the apply driver.'}>
+          <Badge variant={paused ? 'warn' : 'accent'}>{approvedWaiting} approved</Badge>
+        </Tip>
+      )}
       {pending > 0 && <Badge>{pending} queued</Badge>}
       <Tip label={paused ? 'Resume the queue' : 'Pause the queue'}>
         <Button size="icon-sm" variant="ghost" disabled={toggleBusy} onClick={() => void togglePause()} aria-label={paused ? 'Resume queue' : 'Pause queue'}>
@@ -139,6 +156,7 @@ function CurrentTaskStrip() {
           <DialogTitle>Queue activity</DialogTitle>
           <DialogDescription>
             {running.length} running · {pending} pending · {needsHuman} need attention · {failed.length} failed
+            {approvedWaiting > 0 && ` · ${approvedWaiting} approved and waiting to submit`}
           </DialogDescription>
           <div className="mt-3 space-y-4">
             <div>

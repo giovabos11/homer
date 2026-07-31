@@ -20,7 +20,10 @@ const ToastItem = forwardRef<HTMLDivElement, { toast: Toast }>(function ToastIte
 
   useEffect(() => {
     if (toast.celebrate) celebrate({ x: 0.85, y: 0.85 });
-    const t = setTimeout(() => dismiss(toast.id), toast.level === 'warning' ? 9000 : 5200);
+    // A toast carrying a control has to outlive a glance — it is the only place
+    // that action is offered.
+    const life = toast.action ? 14000 : toast.level === 'warning' ? 9000 : 5200;
+    const t = setTimeout(() => dismiss(toast.id), life);
     return () => clearTimeout(t);
   }, [toast, dismiss]);
 
@@ -35,7 +38,20 @@ const ToastItem = forwardRef<HTMLDivElement, { toast: Toast }>(function ToastIte
       className="pointer-events-auto flex items-start gap-2.5 rounded-xl border border-line bg-raised px-3.5 py-3 shadow-[var(--shadow-pop)] w-80"
     >
       <Icon className="h-4.5 w-4.5 shrink-0 mt-px" style={{ color }} />
-      <p className="text-[13px] text-ink-2 leading-snug flex-1">{toast.message}</p>
+      <div className="flex-1 min-w-0">
+        <p className="text-[13px] text-ink-2 leading-snug">{toast.message}</p>
+        {toast.action && (
+          <button
+            onClick={() => {
+              void toast.action?.run();
+              dismiss(toast.id);
+            }}
+            className="mt-2 inline-flex items-center rounded-md border border-line-strong bg-overlay px-2 py-1 text-[11px] font-medium text-ink hover:border-accent/50 hover:text-accent transition-colors cursor-pointer"
+          >
+            {toast.action.label}
+          </button>
+        )}
+      </div>
       <button
         onClick={() => dismiss(toast.id)}
         className="text-ink-3 hover:text-ink rounded p-0.5 cursor-pointer shrink-0"

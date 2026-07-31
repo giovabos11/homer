@@ -1,6 +1,6 @@
 // Row → shared API type mappers. Keeps snake_case/json-blob details out of the API layer.
 import type {
-  Application, Connection, CredentialMeta, EmailRecord, FeedbackEntry, Job,
+  Application, Connection, CredentialMeta, EmailMatchCandidate, EmailRecord, FeedbackEntry, Job,
   PrepTask, QueueTask, ScheduleEvent, SourceBudget,
 } from '@shared/types';
 import type {
@@ -93,6 +93,8 @@ export function toEmail(row: EmailRow): EmailRecord {
     approvedAt: row.approvedAt,
     sentAt: row.sentAt,
     receivedAt: row.receivedAt,
+    matchBasis: (row.matchBasis as EmailRecord['matchBasis']) ?? null,
+    matchCandidates: parseJson<EmailMatchCandidate[]>(row.matchCandidatesJson, []),
   };
 }
 

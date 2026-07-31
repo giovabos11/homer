@@ -79,6 +79,10 @@ export const emails = sqliteTable('emails', {
   approvedAt: text('approved_at'),
   sentAt: text('sent_at'),
   receivedAt: text('received_at'),
+  /** Strongest signal behind the application link: url | company_title | company | manual. */
+  matchBasis: text('match_basis'),
+  /** EmailMatchCandidate[] — the applications an ambiguous email could belong to. */
+  matchCandidatesJson: text('match_candidates_json').notNull().default('[]'),
 });
 
 export const followups = sqliteTable('followups', {

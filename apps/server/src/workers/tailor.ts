@@ -328,7 +328,9 @@ export const tailorWorker: Worker = {
         autoSubmitted: gate.viaResolved ? 1 : 0,
       });
       addAudit(ctx, app.id, 'gate.auto_approved', { reason: gate.reason, viaResolved: gate.viaResolved === true });
-      ctx.queue.enqueue('apply', { payload: { applicationId: app.id } });
+      // Unique per application: an auto-submit that races a user click (or a
+      // re-tailor of an already-approved application) must not double-submit.
+      ctx.queue.enqueueUnique('apply', { applicationId: app.id });
       ctx.bus.emit({
         type: 'toast',
         level: 'info',

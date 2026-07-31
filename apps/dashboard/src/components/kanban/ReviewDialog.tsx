@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, ChevronRight, FileText, Loader2, Lock, PencilLine, Save, Sparkles, XCircle } from 'lucide-react';
+import {
+  CheckCircle2, ChevronRight, FileText, Loader2, Lock, PauseCircle, PencilLine, Play, Save,
+  Sparkles, XCircle,
+} from 'lucide-react';
 import type { Advisory, AdvisoryKind, Application, Job, ScreeningAnswerValue } from '@shared';
 import { ADVISORY_KIND_LABELS, ADVISORY_KIND_ORDER, isNeedsUserAnswer } from '@shared';
 import { api } from '@/api/client';
@@ -222,11 +225,13 @@ export function ReviewDialog({
 }) {
   const pushToast = useStore((s) => s.pushToast);
   const upsertApplication = useStore((s) => s.upsertApplication);
+  const queuePaused = useStore((s) => s.queuePaused);
   const [artifacts, setArtifacts] = useState<ApplicationArtifacts | null>(null);
   const [loading, setLoading] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [standing, setStanding] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
@@ -287,6 +292,51 @@ export function ReviewDialog({
       pushToast('error', `Could not save answers: ${e instanceof Error ? e.message : e}`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const resumeQueue = async () => {
+    setResuming(true);
+    try {
+      await api.resumeQueue();
+      pushToast('success', 'Queue resumed — approved applications start submitting');
+    } catch (e) {
+      pushToast('error', `Could not resume the queue: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setResuming(false);
+    }
+  };
+
+  const approve = async () => {
+    setBusy(true);
+    try {
+      const res = await api.approveApplication(app.id);
+      // Reflect the approval before the dialog closes, so the card behind it
+      // has already changed by the time the user is looking at it again.
+      upsertApplication(res.application);
+      onOpenChange(false);
+
+      if (res.alreadyQueued) {
+        pushToast('info', `Already approved — ${job.company} is queued to apply once, not twice`);
+      } else if (res.queuePaused) {
+        pushToast(
+          'warning',
+          `Approved — ${job.company} is queued, but the queue is paused so nothing will submit yet`,
+          false,
+          { label: 'Resume queue', run: resumeQueue },
+        );
+      } else if (res.queuePosition > 0) {
+        pushToast(
+          'success',
+          `Approved — ${job.company} submits after ${res.queuePosition} task${res.queuePosition === 1 ? '' : 's'} ahead of it`,
+        );
+      } else {
+        pushToast('success', `Approved — submitting to ${job.company} now`);
+      }
+    } catch (e) {
+      pushToast('error', `Approve failed: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -378,6 +428,22 @@ export function ReviewDialog({
           )}
         </div>
 
+        {/* Quiet while the queue runs; explicit the moment it cannot. Approving
+            with a paused queue works — it just does not run — and that gap is
+            what made approval look like it had failed. */}
+        {queuePaused && !rejecting && (
+          <div className="mt-3 flex items-center gap-2 rounded-lg border border-warn-raw/30 bg-warn-raw/8 px-3 py-2">
+            <PauseCircle className="h-3.5 w-3.5 text-warn shrink-0" />
+            <p className="text-[11px] text-ink-2 leading-relaxed flex-1">
+              Queue is paused. Approving still queues this application; resume to run it.
+            </p>
+            <Button size="sm" variant="secondary" disabled={resuming} onClick={() => void resumeQueue()}>
+              {resuming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+              Resume queue
+            </Button>
+          </div>
+        )}
+
         <div className="mt-4 pt-3 border-t border-line">
           {rejecting ? (
             <div className="flex items-center gap-2">
@@ -433,22 +499,9 @@ export function ReviewDialog({
                 <Button variant="destructive-outline" onClick={() => setRejecting(true)} disabled={busy}>
                   <XCircle className="h-4 w-4" /> Reject
                 </Button>
-                <Button
-                  variant="good"
-                  disabled={busy || blocked}
-                  onClick={async () => {
-                    setBusy(true);
-                    try {
-                      await api.approveApplication(app.id);
-                      onOpenChange(false);
-                    } catch (e) {
-                      pushToast('error', `Approve failed: ${e instanceof Error ? e.message : e}`);
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}
-                >
-                  <CheckCircle2 className="h-4 w-4" /> Approve & submit
+                <Button variant="good" disabled={busy || blocked} onClick={() => void approve()}>
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  {queuePaused ? 'Approve & queue' : 'Approve & submit'}
                 </Button>
               </div>
             </div>

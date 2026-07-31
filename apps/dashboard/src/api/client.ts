@@ -1,5 +1,5 @@
 import type {
-  Application, Connection, ConnectionName, CredentialMeta, EmailRecord, FeedbackEntry,
+  Application, ApproveResult, Connection, ConnectionName, CredentialMeta, EmailRecord, FeedbackEntry,
   FeedbackKind, Job, JobStatus, PrepTask, QueueTask, ScheduleEvent, Settings, SkillProgress,
   SourceBudget, StandingAnswers, TaskType, UserProfile,
 } from '@shared';
@@ -102,7 +102,7 @@ const realApi: Api = {
     ),
   patchApplication: (id: number, body: { status?: JobStatus; notes?: string }) =>
     patch<Application>(`/api/applications/${id}`, body),
-  approveApplication: (id: number) => post<{ taskId: number }>(`/api/applications/${id}/approve`),
+  approveApplication: (id: number) => post<ApproveResult>(`/api/applications/${id}/approve`),
   rejectApplication: (id: number, reason: string) =>
     post<Application>(`/api/applications/${id}/reject`, { reason }),
   getApplicationArtifacts: (id: number) => get<ApplicationArtifacts>(`/api/applications/${id}/artifacts`),
@@ -139,6 +139,8 @@ const realApi: Api = {
         offset: params?.offset,
       })}`,
     ),
+  assignEmail: (id: number, applicationId: number | null) =>
+    patch<EmailRecord>(`/api/emails/${id}`, { applicationId }),
   getOutbox: () => get<EmailRecord[]>('/api/outbox'),
   approveOutbox: (id: number) => post<EmailRecord>(`/api/outbox/${id}/approve`),
   rejectOutbox: (id: number, reason?: string) => post<EmailRecord>(`/api/outbox/${id}/reject`, { reason }),
