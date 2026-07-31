@@ -2,8 +2,8 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import {
-  ArrowRight, Award, CalendarClock, Flame, Loader2, MailCheck, Pause, Play, Rocket,
-  RotateCcw, Send, Trophy,
+  ArrowRight, Award, Ban, CalendarClock, ClipboardList, Flame, Loader2, MailCheck, Pause, Play,
+  Rocket, RotateCcw, Send, Trophy,
 } from 'lucide-react';
 import type { QueueTask } from '@shared';
 import { api } from '@/api/client';
@@ -23,11 +23,13 @@ import { KanbanBoard } from '@/components/kanban/KanbanBoard';
 function TaskDetailRow({ t }: { t: QueueTask }) {
   const jobs = useStore((s) => s.jobs);
   const applications = useStore((s) => s.applications);
+  const cancelled = t.state === 'failed' && t.lastError === 'Cancelled by user';
   const stateTone =
     t.state === 'running' ? 'var(--good)'
       : t.state === 'needs_human' ? 'var(--warn-raw)'
-        : t.state === 'failed' ? 'var(--critical)'
-          : t.state === 'done' ? 'var(--accent)' : 'var(--ink-3)';
+        : cancelled ? 'var(--ink-3)'
+          : t.state === 'failed' ? 'var(--critical)'
+            : t.state === 'done' ? 'var(--accent)' : 'var(--ink-3)';
   return (
     <div className="flex items-center gap-2 text-xs rounded-md px-2 py-1.5 bg-overlay/50 border border-line/60">
       <span
@@ -36,9 +38,23 @@ function TaskDetailRow({ t }: { t: QueueTask }) {
       />
       <span className="text-ink-2 truncate flex-1">{humanizeTask(t, jobs, applications)}</span>
       <span className="text-[10px] text-ink-3 tabular shrink-0">{fmtRelative(t.updatedAt)}</span>
-      <Badge variant={t.state === 'failed' ? 'critical' : t.state === 'needs_human' ? 'warn' : 'default'}>
-        {titleCase(t.state)}
+      <Badge variant={cancelled ? 'default' : t.state === 'failed' ? 'critical' : t.state === 'needs_human' ? 'warn' : 'default'}>
+        {cancelled ? 'Stopped' : titleCase(t.state)}
       </Badge>
+      {t.state === 'running' && (
+        <Tip label="Stop this task">
+          <Button size="icon-sm" variant="ghost" aria-label="Stop task" onClick={() => void api.cancelTask(t.id)}>
+            <Ban className="h-3.5 w-3.5" />
+          </Button>
+        </Tip>
+      )}
+      {cancelled && (
+        <Tip label="Run it again">
+          <Button size="icon-sm" variant="ghost" aria-label="Retry task" onClick={() => void api.retryTask(t.id)}>
+            <RotateCcw className="h-3.5 w-3.5" />
+          </Button>
+        </Tip>
+      )}
     </div>
   );
 }
@@ -57,6 +73,7 @@ function CurrentTaskStrip() {
   const [open, setOpen] = useState(false);
   const [toggleBusy, setToggleBusy] = useState(false);
   const [retryBusy, setRetryBusy] = useState(false);
+  const [stopBusy, setStopBusy] = useState(false);
 
   const running = tasks.filter((t) => t.state === 'running');
   const needsHuman = tasks.filter((t) => t.state === 'needs_human').length;
@@ -143,6 +160,28 @@ function CurrentTaskStrip() {
               </div>
             )}
             <div className="flex items-center gap-2 pt-1">
+              {(running.length > 0 || pending > 0) && (
+                <Button
+                  size="sm"
+                  variant="destructive-outline"
+                  disabled={stopBusy}
+                  onClick={async () => {
+                    if (!window.confirm(`Stop ${running.length} running and ${pending} queued task${pending === 1 ? '' : 's'}? You can retry any of them afterwards.`)) return;
+                    setStopBusy(true);
+                    try {
+                      const { cancelled } = await api.cancelAll('all');
+                      pushToast('warning', `${cancelled} task${cancelled === 1 ? '' : 's'} stopped`);
+                    } catch (err) {
+                      pushToast('error', `Stop failed: ${err instanceof Error ? err.message : 'unknown error'}`);
+                    } finally {
+                      setStopBusy(false);
+                    }
+                  }}
+                >
+                  {stopBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Ban className="h-3.5 w-3.5" />}
+                  Stop all
+                </Button>
+              )}
               {failed.length > 0 && (
                 <Button
                   size="sm"
@@ -176,6 +215,39 @@ function CurrentTaskStrip() {
         </DialogContent>
       </Dialog>
     </motion.div>
+  );
+}
+
+/**
+ * Quiet nudge: without a salary, start date, or work-authorization answer,
+ * every application stops at the review gate. One click opens the form.
+ */
+const STANDING_LABEL: Record<string, string> = {
+  salaryExpectation: 'salary expectations',
+  earliestStartDate: 'earliest start date',
+  citizenshipStatus: 'work authorization',
+};
+
+function StandingAnswersNudge() {
+  const missing = useStore((s) => s.missingStanding);
+  const openProfile = useStore((s) => s.openProfileModal);
+  if (missing.length === 0) return null;
+  const names = missing.map((k) => STANDING_LABEL[k] ?? k);
+  return (
+    <motion.button
+      initial={{ opacity: 0, y: -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      onClick={openProfile}
+      className="w-full rounded-xl border border-warn-raw/40 bg-warn-raw/8 px-3.5 py-2 flex items-center gap-2.5 text-left cursor-pointer hover:border-warn-raw/60 transition-colors"
+    >
+      <ClipboardList className="h-4 w-4 text-warn shrink-0" />
+      <span className="text-[13px] text-ink flex-1 min-w-0">
+        Answer your {names.join(', ')} once and applications stop waiting on you.
+      </span>
+      <span className="text-xs text-accent shrink-0 inline-flex items-center gap-1">
+        Fill them in <ArrowRight className="h-3 w-3" />
+      </span>
+    </motion.button>
   );
 }
 
@@ -272,10 +344,11 @@ export default function MissionControl() {
   return (
     <div className="flex flex-col h-full gap-4">
       <PageHeader
-        title="Mission Control"
+        title="Home"
         subtitle="Your entire pipeline, live — drag cards to move them through the funnel"
       />
       <OnboardingCard />
+      <StandingAnswersNudge />
       <CurrentTaskStrip />
       <XpHeader />
       <div className="flex-1 min-h-0">

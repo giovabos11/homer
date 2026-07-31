@@ -1,11 +1,13 @@
 import type {
   Application, Connection, ConnectionName, CredentialMeta, EmailRecord, FeedbackEntry,
-  FeedbackKind, Job, JobStatus, PrepTask, QueueTask, ScheduleEvent, Settings, SseEvent,
+  FeedbackKind, Job, JobStatus, PrepTask, QueueTask, ScheduleEvent, Settings, SourceBudget,
+  SseEvent, StandingAnswerKey, StandingAnswers, TaskType,
 } from '@shared';
 import type { Api, ApplicationArtifacts, JobsQuery, QueueSnapshot, SearchBody } from '../types';
 import {
   APPLICATIONS, ARTIFACTS, BUDGETS, CONNECTIONS, CREDENTIALS, EMAILS, FEEDBACK,
   JOBS, PREP_TASKS, PROFILE, QUEUE_TASKS, RESET_PREVIEW, SCHEDULE, SETTINGS, SKILLS,
+  STANDING_ANSWERS,
 } from './data';
 import { mockCoverLetterPdf, mockResumePdf } from '@/lib/mockPdf';
 
@@ -30,6 +32,12 @@ class MockBus {
 
 export const mockBus = new MockBus();
 
+/** Critical standing answers still unset — mirrors the server's rule. */
+function missingCriticalStanding(): StandingAnswerKey[] {
+  const keys: StandingAnswerKey[] = ['salaryExpectation', 'earliestStartDate', 'citizenshipStatus'];
+  return keys.filter((k) => String(S.standing[k] ?? '').trim() === '');
+}
+
 // ---------------------------------------------------------------------------
 // Mutable state (cloned fixtures)
 // ---------------------------------------------------------------------------
@@ -47,6 +55,7 @@ const S = {
   feedback: structuredClone(FEEDBACK) as FeedbackEntry[],
   profile: structuredClone(PROFILE),
   settings: structuredClone(SETTINGS) as Settings,
+  standing: structuredClone(STANDING_ANSWERS) as StandingAnswers,
   paused: false,
   setupActive: false,
   setupMode: null as 'interview' | 'documents' | null,
@@ -491,7 +500,7 @@ export const mockApi: Api = {
         const app: Application = {
           id: nextId++, jobId: job.id, status: 'tailoring', gate: S.settings.gateMode,
           approvedAt: null, submittedAt: null, resumePath: null, coverLetterPath: null,
-          answers: null, archiveDir: null, notes: [],
+          answers: null, archiveDir: null, notes: [], autoSubmitted: false,
         };
         S.applications.push(app);
         emitApp(app);
@@ -529,13 +538,13 @@ export const mockApi: Api = {
         app = {
           id: nextId++, jobId: id, status: 'tailoring', gate: S.settings.gateMode,
           approvedAt: null, submittedAt: null, resumePath: null, coverLetterPath: null,
-          answers: null, archiveDir: null, notes: [],
+          answers: null, archiveDir: null, notes: [], autoSubmitted: false,
         };
         S.applications.push(app);
-      } else {
-        app.status = 'tailoring';
       }
-      emitApp(app);
+      const current: Application = app;
+      current.status = 'tailoring';
+      emitApp(current);
       mockBus.emit({ type: 'queue.updated', task: structuredClone(task) });
       toast('info', `Tailoring started for ${j.company} — ${j.title}`);
     }, 2000);
@@ -673,6 +682,86 @@ export const mockApi: Api = {
     return out;
   },
 
+  async patchApplicationAnswers(id: number, body: { answers: Record<string, string>; saveStanding?: string[] }) {
+    await delay();
+    const a = S.applications.find((x) => x.id === id);
+    if (!a) throw new Error('application not found');
+    const next = { ...(a.answers ?? {}) };
+    const saved: StandingAnswerKey[] = [];
+    for (const [q, v] of Object.entries(body.answers)) {
+      if (!v.trim()) continue;
+      next[q] = v.trim();
+      if (body.saveStanding?.includes(q) && /salary/i.test(q)) {
+        S.standing.salaryExpectation = v.trim();
+        saved.push('salaryExpectation');
+      }
+    }
+    a.answers = next;
+    emitApp(a);
+    return {
+      application: structuredClone(withJob(a)),
+      unresolved: Object.entries(next)
+        .filter(([, v]) => typeof v === 'object' && v !== null)
+        .map(([q]) => q),
+      savedAsStanding: saved,
+    };
+  },
+
+  async getStandingAnswers() {
+    await delay();
+    return { answers: structuredClone(S.standing), missingCritical: missingCriticalStanding() };
+  },
+
+  async putStandingAnswers(body: Partial<StandingAnswers>) {
+    await delay();
+    Object.assign(S.standing, body);
+    toast('success', 'Application answers saved (mock)');
+    return { answers: structuredClone(S.standing), missingCritical: missingCriticalStanding() };
+  },
+
+  async getSources() {
+    await delay();
+    return structuredClone(S.budgets) as SourceBudget[];
+  },
+
+  async setSourceEnabled(source: string, enabled: boolean) {
+    await delay(150);
+    const b = S.budgets.find((x) => x.source === source);
+    if (!b) throw new Error('source not found');
+    b.enabled = enabled;
+    mockBus.emit({ type: 'queue.snapshot', ...snapshot() });
+    return structuredClone(b) as SourceBudget;
+  },
+
+  async cancelAll(scope: 'running' | 'pending' | 'all') {
+    await delay(200);
+    const states =
+      scope === 'running' ? ['running'] : scope === 'pending' ? ['pending', 'paused', 'waiting_session'] : ['running', 'pending', 'paused', 'waiting_session'];
+    let cancelled = 0;
+    for (const t of S.tasks) {
+      if (!states.includes(t.state)) continue;
+      t.state = 'failed';
+      t.lastError = 'Cancelled by user';
+      t.updatedAt = now();
+      cancelled += 1;
+    }
+    mockBus.emit({ type: 'queue.snapshot', ...snapshot() });
+    return { cancelled };
+  },
+
+  async deleteFeedback(id: number) {
+    await delay(150);
+    S.feedback = S.feedback.filter((f) => f.id !== id);
+    return { ok: true };
+  },
+
+  async clearFeedback(kind?: FeedbackKind) {
+    await delay(200);
+    const before = S.feedback.length;
+    S.feedback = kind ? S.feedback.filter((f) => f.kind !== kind) : [];
+    return { deleted: before - S.feedback.length };
+  },
+
   async search(body: SearchBody) {
     await delay(300);
     const searchId = `search-${nextId++}`;
@@ -741,7 +830,7 @@ export const mockApi: Api = {
     return structuredClone(S.settings);
   },
 
-  async resolveHuman(taskId: number) {
+  async resolveHuman(taskId: number, _answers?: Record<string, string>) {
     await delay();
     const t = S.tasks.find((x) => x.id === taskId);
     if (!t) throw new Error('task not found');

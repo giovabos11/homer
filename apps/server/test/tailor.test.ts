@@ -169,12 +169,16 @@ describe('tailor worker (real path, MockRunner)', () => {
     expect(fs.existsSync(app.coverLetterPath!)).toBe(true);
 
     // Screening answers came from the 08-application-forms defaults table.
-    const answers = JSON.parse(app.answersJson!) as Record<string, string>;
+    const answers = JSON.parse(app.answersJson!) as Record<string, unknown>;
     expect(answers['Are you authorized to work in the US?']).toBe('Yes, for any employer');
-    expect(answers['Salary expectations']).toBe('FLAGGED_FOR_USER');
-    expect(answers['Earliest start date']).toBe('FLAGGED_FOR_USER');
+    // Unanswerable rows are structured needs-user markers, never a magic string.
+    expect(answers['Salary expectations']).toMatchObject({ status: 'needs_user', standingKey: 'salaryExpectation' });
+    expect(answers['Earliest start date']).toMatchObject({ status: 'needs_user', standingKey: 'earliestStartDate' });
+    expect(JSON.stringify(answers)).not.toContain('FLAGGED_FOR_USER');
     // Drafter flags surface as flagged entries, never invented answers.
-    expect(Object.keys(answers).some((k) => k.startsWith('FLAG:') && k.includes('Kubernetes'))).toBe(true);
+    const flagKey = Object.keys(answers).find((k) => k.startsWith('FLAG:') && k.includes('Kubernetes'));
+    expect(flagKey).toBeTruthy();
+    expect(answers[flagKey!]).toMatchObject({ status: 'needs_user' });
 
     // Upstream-style archive with outcome skeleton; cover letter obeys the no-dashes rule.
     const archive = path.join(repo.root, app.archiveDir!);

@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import type {
   Application, Connection, EmailRecord, FeedbackEntry, Job, PrepTask, QueueTask,
-  ScheduleEvent, ScheduleNextRuns, Settings, SkillProgress, SourceBudget, SseEvent, UserProfile,
+  ScheduleEvent, ScheduleNextRuns, Settings, SkillProgress, SourceBudget, SseEvent,
+  StandingAnswerKey, UserProfile,
 } from '@shared';
 import { api } from '@/api/client';
 
@@ -61,6 +62,10 @@ interface StoreState {
   connections: Connection[];
   settings: Settings | null;
   profile: UserProfile | null;
+  /** Standing answers the user has not filled in yet — drives the onboarding nudge. */
+  missingStanding: StandingAnswerKey[];
+  /** Profile modal visibility — shared so nudges elsewhere can open it. */
+  profileModalOpen: boolean;
   feedback: FeedbackEntry[];
   toasts: Toast[];
   asks: AskSession[];
@@ -86,6 +91,9 @@ interface StoreState {
   clearSetup(): void;
   setSettings(s: Settings): void;
   setProfile(p: UserProfile): void;
+  setMissingStanding(keys: StandingAnswerKey[]): void;
+  openProfileModal(): void;
+  setProfileModalOpen(v: boolean): void;
   setJobs(jobs: Job[]): void;
   upsertJob(job: Job): void;
   upsertApplication(a: Application): void;
@@ -113,6 +121,8 @@ export const useStore = create<StoreState>((set, get) => ({
   connections: [],
   settings: null,
   profile: null,
+  missingStanding: [],
+  profileModalOpen: false,
   feedback: [],
   toasts: [],
   asks: [],
@@ -136,6 +146,11 @@ export const useStore = create<StoreState>((set, get) => ({
           api.getProfile(),
           api.getFeedback(),
         ]);
+      // Non-blocking: an older server without the route must not break boot.
+      void api
+        .getStandingAnswers()
+        .then((r) => set({ missingStanding: r.missingCritical }))
+        .catch(() => undefined);
       set({
         jobs: jobsRes.jobs,
         applications: appsRes.applications,
@@ -257,6 +272,11 @@ export const useStore = create<StoreState>((set, get) => ({
               : a,
           ),
         }));
+        // The ask session can edit profile files within its safe-list — refetch
+        // so profileReady and the document list reflect what just changed.
+        if (e.done) {
+          void api.getProfile().then((p) => set({ profile: p })).catch(() => undefined);
+        }
         break;
       }
       case 'setup.delta': {
@@ -333,6 +353,15 @@ export const useStore = create<StoreState>((set, get) => ({
   },
   setProfile(p) {
     set({ profile: p });
+  },
+  setMissingStanding(keys) {
+    set({ missingStanding: keys });
+  },
+  openProfileModal() {
+    set({ profileModalOpen: true });
+  },
+  setProfileModalOpen(v) {
+    set({ profileModalOpen: v });
   },
   setJobs(jobs) {
     set({ jobs });

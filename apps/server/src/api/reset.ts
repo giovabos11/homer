@@ -20,6 +20,9 @@ type Scope = (typeof SCOPES)[number];
 const DATA_TABLES = [
   'jobs', 'applications', 'emails', 'followups', 'schedule_events', 'prep_tasks',
   'skills_progress', 'task_queue', 'source_budgets', 'credentials_meta', 'connections', 'feedback',
+  // Standing answers are normal data: a db reset clears them, exactly like the
+  // rest of the pipeline state (documented in apps/CONTRACT.md).
+  'standing_answers',
 ];
 
 /** Upstream profile files restored (to their tracked placeholder state) by the profile scope. */

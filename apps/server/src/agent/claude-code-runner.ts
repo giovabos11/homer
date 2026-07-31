@@ -6,12 +6,47 @@
 //  - --bare is never passed (it would bypass OAuth).
 //  - The prompt is written to stdin (never a shell-quoted argv), so Windows
 //    cmd/.cmd shim quoting can never mangle or inject through it.
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import { execFileSync } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { repoRoot } from '../util/paths';
 import { extractStructured, type AgentRunner, type AgentRunOptions, type AgentRunResult } from './types';
+
+/** Rejection used when a run is cancelled by the user (never a crash). */
+export class AgentAborted extends Error {
+  constructor() {
+    super('Agent run aborted');
+    this.name = 'AbortError';
+  }
+}
+
+/**
+ * Kill a spawned CLI and everything it spawned. On Windows `child.kill()` only
+ * kills the direct child, leaving the real `claude`/node process alive, so the
+ * tree is killed with taskkill and child.kill() is the fallback everywhere.
+ */
+export function killTree(pid: number | undefined, child?: ChildProcess): void {
+  if (pid && process.platform === 'win32') {
+    try {
+      execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => undefined);
+      return;
+    } catch {
+      /* fall through to kill() */
+    }
+  }
+  try {
+    if (pid && process.platform !== 'win32') process.kill(-pid, 'SIGKILL');
+  } catch {
+    /* not a process group leader — fall through */
+  }
+  try {
+    child?.kill('SIGKILL');
+  } catch {
+    /* already gone */
+  }
+}
 
 interface ResolvedCommand {
   command: string;
@@ -64,9 +99,13 @@ export class ClaudeCodeRunner implements AgentRunner {
       throw new Error('Claude Code CLI not found on PATH. Install it or check the Connections panel.');
     }
 
+    if (opts.signal?.aborted) throw new AgentAborted();
+
     const args = [...resolved.prefixArgs, '-p', '--output-format', 'stream-json', '--verbose'];
     if (opts.sessionId) args.push('--resume', opts.sessionId);
     if (opts.allowedTools?.length) args.push('--allowedTools', opts.allowedTools.join(','));
+    if (opts.permissionMode) args.push('--permission-mode', opts.permissionMode);
+    if (opts.appendSystemPrompt) args.push('--append-system-prompt', opts.appendSystemPrompt);
     // Per-task model routing: the CLI accepts the aliases haiku/sonnet/opus;
     // 'default' (or unset) keeps the user's own Claude Code default model.
     if (opts.model && opts.model !== 'default') args.push('--model', opts.model);
@@ -92,10 +131,28 @@ export class ClaudeCodeRunner implements AgentRunner {
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
-        child.kill();
+        killTree(child.pid, child);
         reject(new Error(`Claude Code run timed out after ${timeoutMs} ms`));
       }, timeoutMs);
       timer.unref?.();
+
+      // User cancellation: kill the whole process tree (the CLI spawns
+      // children of its own; child.kill() alone can orphan them on Windows).
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        killTree(child.pid, child);
+        reject(new AgentAborted());
+      };
+      if (opts.signal) {
+        if (opts.signal.aborted) {
+          onAbort();
+          return;
+        }
+        opts.signal.addEventListener('abort', onAbort, { once: true });
+        child.on('close', () => opts.signal?.removeEventListener('abort', onAbort));
+      }
 
       const handleLine = (line: string) => {
         const trimmed = line.trim();

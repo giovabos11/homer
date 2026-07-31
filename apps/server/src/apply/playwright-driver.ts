@@ -27,7 +27,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { fenceUntrusted, strictJsonFooter } from '../agent/prompts';
-import { FLAGGED_FOR_USER, matchScreeningAnswer, yesNo, type ScreeningDefault } from '../docs/screening';
+import { FLAGGED_FOR_USER, defaultsFromAnswers, matchScreeningAnswer, type ScreeningDefault } from '../docs/screening';
+import { buildOptionPrompt, matchOption, type FieldOption } from './option-match';
 import {
   ApplyBlocked,
   detectAts,
@@ -39,6 +40,7 @@ import {
   type ApplyRunArgs,
   type ApplyScreenshot,
   type AtsKind,
+  type BlockedChoice,
 } from './driver';
 
 type Page = import('playwright').Page;
@@ -60,7 +62,10 @@ export interface FieldDescriptor {
   required: boolean;
   visible: boolean;
   value: string;
+  /** Visible option labels (legacy shape). */
   options: string[];
+  /** Real option set with submit values — what option matching actually runs on. */
+  optionSet?: FieldOption[];
 }
 
 export interface FillAction {
@@ -72,7 +77,17 @@ export interface FillAction {
 
 export interface FillBlocker {
   question: string;
-  reason: 'salary' | 'start_date' | 'flagged' | 'unknown';
+  reason: 'salary' | 'start_date' | 'flagged' | 'unknown' | 'no_option_match';
+  /** Real, legal options for a select / radio / checkbox group. */
+  options?: FieldOption[];
+  /** The resolved answer that could not be mapped onto those options. */
+  answer?: string;
+  /** Field (or radio-group leader) index — how an agent/human pick gets applied. */
+  index?: number;
+  /** For radio/checkbox groups: the input index behind each option, same order. */
+  optionIndexes?: number[];
+  /** 'select' → selectOption, 'check' → click the matching input. */
+  apply?: 'select' | 'check';
 }
 
 export interface FillPlan {
@@ -114,28 +129,19 @@ function blockerReason(question: string): FillBlocker['reason'] {
   return 'unknown';
 }
 
-function defaultsFromAnswers(answers: Record<string, string>): ScreeningDefault[] {
-  return Object.entries(answers).map(([question, answer]) => ({
-    question,
-    answer,
-    flagged: answer === FLAGGED_FOR_USER,
-  }));
+/** Option set for a field: the captured real options, or labels-only fallback. */
+export function optionsOf(f: FieldDescriptor): FieldOption[] {
+  if (f.optionSet && f.optionSet.length > 0) return f.optionSet;
+  return f.options.map((label) => ({ value: label, label }));
 }
 
 /** Choose the <select> option matching an answer ("Yes, for any employer" → "Yes"). */
 export function pickSelectOption(options: string[], answer: string): string | null {
-  const real = options.filter((o) => o.trim() && !/^(select|choose|please|--)/i.test(o.trim()));
-  const exact = real.find((o) => o.trim().toLowerCase() === answer.trim().toLowerCase());
-  if (exact) return exact;
-  const yn = yesNo(answer);
-  if (yn) {
-    const m = real.find((o) => new RegExp(`^${yn}\\b`, 'i').test(o.trim()));
-    if (m) return m;
-  }
-  const prefix = real.find(
-    (o) => o.trim().toLowerCase().startsWith(answer.trim().toLowerCase().slice(0, 12)) && answer.length >= 3,
+  const match = matchOption(
+    options.map((label) => ({ value: label, label })),
+    answer,
   );
-  return prefix ?? null;
+  return match?.option.label ?? null;
 }
 
 /**
@@ -178,21 +184,48 @@ export function planFormFill(fields: FieldDescriptor[], profile: ApplyProfile): 
     const question = (first.contextText || first.name).slice(0, 300);
     const match = matchScreeningAnswer(question, defaults);
     const required = group.some((g) => g.required);
+    // The group's REAL options: one per radio input, label + submit value.
+    const groupOptions: FieldOption[] = group.map((g) => ({
+      value: g.value || g.labelText || g.id,
+      label: (g.labelText || g.value || g.id).trim(),
+    }));
+    const optionIndexes = group.map((g) => g.index);
     if (!match) {
-      if (required) blockers.push({ question, reason: blockerReason(question) });
-      else unmatched.push(first);
+      if (required) {
+        blockers.push({ question, reason: blockerReason(question), options: groupOptions, optionIndexes, index: first.index, apply: 'check' });
+      } else {
+        unmatched.push(first);
+      }
       continue;
     }
     if (match.flagged) {
-      if (required) blockers.push({ question, reason: blockerReason(question) === 'unknown' ? 'flagged' : blockerReason(question) });
+      if (required) {
+        blockers.push({
+          question,
+          reason: blockerReason(question) === 'unknown' ? 'flagged' : blockerReason(question),
+          options: groupOptions,
+          optionIndexes,
+          index: first.index,
+          apply: 'check',
+        });
+      }
       continue;
     }
-    const yn = yesNo(match.answer);
-    const target =
-      group.find((g) => g.labelText.trim().toLowerCase() === match.answer.trim().toLowerCase()) ??
-      (yn ? group.find((g) => new RegExp(`^${yn}\\b`, 'i').test(g.labelText.trim())) : undefined);
-    if (target) actions.push({ index: target.index, kind: 'check', value: match.answer, label: question });
-    else if (required) blockers.push({ question, reason: 'unknown' });
+    const picked = matchOption(groupOptions, match.answer);
+    const target = picked ? group.find((g) => (g.value || g.labelText || g.id) === picked.option.value) : undefined;
+    if (target) {
+      actions.push({ index: target.index, kind: 'check', value: picked!.option.label, label: question });
+    } else if (required) {
+      blockers.push({
+        question,
+        reason: 'no_option_match',
+        options: groupOptions,
+        optionIndexes,
+        answer: match.answer,
+        index: first.index,
+        apply: 'check',
+      });
+    }
   }
 
   // 3) Everything else.
@@ -236,17 +269,34 @@ export function planFormFill(fields: FieldDescriptor[], profile: ApplyProfile): 
     const question = questionOf(f);
     const match = matchScreeningAnswer(question + ' ' + f.contextText.slice(0, 200), defaults);
     if (match) {
+      const isChoice = f.tag === 'select';
       if (match.flagged) {
         if (f.required) {
           const reason = blockerReason(question + ' ' + f.contextText);
-          blockers.push({ question, reason: reason === 'unknown' ? 'flagged' : reason });
+          blockers.push({
+            question,
+            reason: reason === 'unknown' ? 'flagged' : reason,
+            ...(isChoice ? { options: optionsOf(f), index: f.index, apply: 'select' as const } : {}),
+          });
         }
         continue;
       }
-      if (f.tag === 'select') {
-        const option = pickSelectOption(f.options, match.answer);
-        if (option) actions.push({ index: f.index, kind: 'select', value: option, label: question });
-        else if (f.required) blockers.push({ question, reason: 'unknown' });
+      if (isChoice) {
+        const picked = matchOption(optionsOf(f), match.answer);
+        if (picked) {
+          actions.push({ index: f.index, kind: 'select', value: picked.option.label, label: question });
+        } else if (f.required) {
+          // A legal option exists, we just cannot prove which one — park with
+          // the real options rather than guessing (agent pass runs first).
+          blockers.push({
+            question,
+            reason: 'no_option_match',
+            options: optionsOf(f),
+            answer: match.answer,
+            index: f.index,
+            apply: 'select',
+          });
+        }
       } else {
         actions.push({ index: f.index, kind: 'fill', value: match.answer, label: question });
       }
@@ -254,7 +304,11 @@ export function planFormFill(fields: FieldDescriptor[], profile: ApplyProfile): 
     }
 
     if (f.required && !f.value) {
-      blockers.push({ question, reason: blockerReason(question + ' ' + f.contextText) });
+      blockers.push({
+        question,
+        reason: blockerReason(question + ' ' + f.contextText),
+        ...(f.tag === 'select' ? { options: optionsOf(f), index: f.index, apply: 'select' as const } : {}),
+      });
     } else {
       unmatched.push(f);
     }
@@ -291,6 +345,9 @@ const agentMapSchema = z.object({
 });
 
 function buildMappingPrompt(fields: FieldDescriptor[], profile: ApplyProfile): string {
+  const unanswered = Object.entries(profile.answers)
+    .filter(([, v]) => typeof v !== 'string' || v === FLAGGED_FOR_USER)
+    .map(([q]) => q);
   const safeProfile = {
     fullName: profile.fullName,
     firstName: profile.firstName,
@@ -299,13 +356,14 @@ function buildMappingPrompt(fields: FieldDescriptor[], profile: ApplyProfile): s
     phone: profile.phone,
     location: profile.location,
     links: profile.links,
-    screeningAnswers: profile.answers,
+    screeningAnswers: usableProfileAnswers(profile),
+    questionsOnlyTheCandidateCanAnswer: unanswered,
   };
   return [
     'You map job-application form fields to a candidate profile for automated,',
     'truthful form filling. Use ONLY the profile data below. Rules:',
     `- Any question the profile cannot answer (salary, start date, citizenship,`,
-    `  unknown skills, or anything marked ${FLAGGED_FOR_USER}) goes in "unanswerable" — never invent.`,
+    `  unknown skills, or anything in "questionsOnlyTheCandidateCanAnswer") goes in "unanswerable" — never invent.`,
     '- confidence is YOUR overall confidence (0-1) that the mapping is correct and complete.',
     '- Only reference field "index" values that exist below.',
     '',
@@ -368,10 +426,10 @@ export class PlaywrightApplyDriver implements ApplyDriver {
         /* screenshot failures never break the run */
       }
     };
-    const blocked = async (prompt: string): Promise<never> => {
+    const blocked = async (prompt: string, choices: BlockedChoice[] = []): Promise<never> => {
       await snap('parked');
       // Browser stays open on purpose (FR-25): the user finishes manually.
-      throw new ApplyBlocked(prompt, shots);
+      throw new ApplyBlocked(prompt, shots, choices);
     };
 
     const ats = detectAts(args.target.url);
@@ -430,17 +488,29 @@ export class PlaywrightApplyDriver implements ApplyDriver {
 
     // Build the fill plan.
     let plan = planFormFill(fields, args.profile);
+    // Option-set escalation: a resolved answer that no deterministic rule could
+    // map onto the field's REAL options gets one agent pass (cheap model) that
+    // must choose from the enumerated options or return none.
+    plan = await this.resolveOptionBlockers(args, plan);
     if (ats === 'generic' && plan.blockers.some((b) => b.reason === 'unknown')) {
       // Agent-assisted mapping for unknown generic forms (deterministic answers win).
       plan = await this.agentAssist(args, fields, plan);
     }
     if (plan.blockers.length > 0) {
       const lines = plan.blockers.map((b) => `- [${b.reason}] ${b.question}`);
+      const choices: BlockedChoice[] = plan.blockers
+        .filter((b) => (b.options?.length ?? 0) > 0)
+        .map((b) => ({
+          question: b.question,
+          options: b.options!.filter((o) => o.label.trim() !== ''),
+          ...(b.answer ? { answer: b.answer } : {}),
+        }));
       return blocked(
         `The ${ats} application form for ${args.target.company} — ${args.target.title} has ${plan.blockers.length} question(s) that must not be answered automatically:\n` +
           `${lines.join('\n')}\n` +
           `The rest of the form data is pre-staged below; complete these fields in the open browser, submit, then resolve this task.\n` +
-          `Pre-staged data: ${JSON.stringify({ ...identitySummary(args.profile), answers: args.profile.answers })}`,
+          `Pre-staged data: ${JSON.stringify({ ...identitySummary(args.profile), answers: usableProfileAnswers(args.profile) })}`,
+        choices,
       );
     }
 
@@ -497,6 +567,57 @@ export class PlaywrightApplyDriver implements ApplyDriver {
     const confirmationText = extractConfirmation(afterHtml);
     await snap('confirmation');
     return { submitted: true, ats, confirmationText, screenshots: shots, filledFields, answersUsed };
+  }
+
+  /**
+   * One agent call per option blocker (cheap model — settings.modelScore tier).
+   * The model may ONLY answer with an index into the real option list or null;
+   * anything else keeps the blocker, so the human still decides.
+   */
+  private async resolveOptionBlockers(args: ApplyRunArgs, plan: FillPlan): Promise<FillPlan> {
+    const pending = plan.blockers.filter((b) => b.reason === 'no_option_match' && b.answer && (b.options?.length ?? 0) > 0);
+    if (pending.length === 0) return plan;
+
+    const actions = [...plan.actions];
+    const stillBlocked: FillBlocker[] = [];
+    for (const blocker of plan.blockers) {
+      if (!pending.includes(blocker)) {
+        stillBlocked.push(blocker);
+        continue;
+      }
+      const options = blocker.options!;
+      let index: number | null = null;
+      try {
+        const result = await args.runner.run({
+          prompt: buildOptionPrompt(blocker.question, blocker.answer!, options),
+          model: args.optionModel ?? 'haiku',
+          timeoutMs: Math.min(args.timeoutMs ?? 120000, 120000),
+        });
+        const parsed = z
+          .object({ index: z.number().int().min(0).max(options.length - 1).nullable() })
+          .safeParse(result.structured);
+        index = parsed.success ? parsed.data.index : null;
+      } catch {
+        index = null; // an agent failure is a park, never a guess
+      }
+      const chosen = index == null ? null : options[index];
+      if (!chosen) {
+        stillBlocked.push(blocker);
+        continue;
+      }
+      if (blocker.apply === 'check') {
+        // Radio/checkbox group: each option carries its own input index.
+        const idx = blocker.optionIndexes?.[index!];
+        if (idx == null) {
+          stillBlocked.push(blocker);
+          continue;
+        }
+        actions.push({ index: idx, kind: 'check', value: chosen.label, label: blocker.question });
+      } else {
+        actions.push({ index: blocker.index!, kind: 'select', value: chosen.label, label: blocker.question });
+      }
+    }
+    return { ...plan, actions, blockers: stillBlocked };
   }
 
   private async agentAssist(args: ApplyRunArgs, fields: FieldDescriptor[], deterministic: FillPlan): Promise<FillPlan> {
@@ -606,10 +727,16 @@ async function collectFields(page: Page): Promise<FieldDescriptor[]> {
       }
       const container = el.closest('fieldset, .field, .form-group, .application-question, li, div');
       const contextText = String(container?.textContent ?? '').trim().replace(/\s+/g, ' ').slice(0, 400);
-      const options =
+      // Real option set: visible label AND submit value, so a resolved answer
+      // can be mapped onto a LEGAL option instead of typed blindly.
+      const optionSet =
         String(el.tagName).toLowerCase() === 'select'
-          ? Array.from(el.options as any[]).map((o: any) => String(o.textContent ?? '').trim())
+          ? Array.from(el.options as any[]).map((o: any) => ({
+              value: String(o.value ?? o.textContent ?? '').trim(),
+              label: String(o.textContent ?? o.value ?? '').trim().replace(/\s+/g, ' '),
+            }))
           : [];
+      const options = optionSet.map((o: { label: string }) => o.label);
       out.push({
         index: i,
         tag: String(el.tagName).toLowerCase() as FieldDescriptor['tag'],
@@ -624,6 +751,7 @@ async function collectFields(page: Page): Promise<FieldDescriptor[]> {
         visible,
         value: 'value' in el ? String(el.value ?? '') : '',
         options,
+        optionSet,
       });
     });
     return out;
@@ -663,6 +791,15 @@ function hostOf(url: string): string {
 
 function identitySummary(p: ApplyProfile): Record<string, string> {
   return { name: p.fullName, email: p.email, phone: p.phone, location: p.location };
+}
+
+/** Pre-staged data never carries a needs-user marker — only real answers. */
+function usableProfileAnswers(p: ApplyProfile): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [q, v] of Object.entries(p.answers)) {
+    if (typeof v === 'string' && v !== FLAGGED_FOR_USER) out[q] = v;
+  }
+  return out;
 }
 
 export { detectAts, detectCaptcha };

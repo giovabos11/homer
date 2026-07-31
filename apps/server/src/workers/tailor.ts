@@ -33,7 +33,8 @@ import {
 } from '../docs/content';
 import { verifyAtsPdf, type AtsVerifyResult } from '../docs/render';
 import { writeApplicationArchive } from '../docs/archive';
-import { screeningAnswers } from '../docs/screening';
+import { answersResolved as allAnswersResolved, resolveScreeningAnswers, unresolvedQuestions } from '../docs/screening';
+import type { ScreeningAnswerValue } from '@shared/types';
 import { addAudit, ensureApplication, getJob, sleep, updateApplication, updateJob, writePlaceholderPdf, type JobRow } from './helpers';
 import type { Worker, WorkerArgs } from './registry';
 import type { AppContext } from '../context';
@@ -191,16 +192,22 @@ export const tailorWorker: Worker = {
     }
 
     const settings = ctx.settings.get();
-    const gate = decideGate(settings, { source: job.source, fitScore: job.fitScore, legitVerdict: job.legitVerdict as never });
-    const app = ensureApplication(ctx, job.id, gate.mode);
+    // Mode only (answers are not known yet) — the real decision happens below,
+    // once the screening answers have been resolved.
+    const gateMode = decideGate(settings, {
+      source: job.source,
+      fitScore: job.fitScore,
+      legitVerdict: job.legitVerdict as never,
+    });
+    const app = ensureApplication(ctx, job.id, gateMode.mode);
     updateJob(ctx, job.id, { status: 'tailoring' });
     updateApplication(ctx, app.id, { status: 'tailoring' });
-    addAudit(ctx, app.id, 'tailor.started', { gate: gate.mode });
+    addAudit(ctx, app.id, 'tailor.started', { gate: gateMode.mode });
 
     const dir = path.join(ctx.artifactsDir, 'applications', String(app.id));
     let resumePath: string | null = null;
     let coverPath: string | null = null;
-    let answers: Record<string, string> | null = null;
+    let answers: Record<string, ScreeningAnswerValue> | null = null;
     let archiveDir: string | null = null;
     let atsOk = true;
 
@@ -208,11 +215,7 @@ export const tailorWorker: Worker = {
       await sleep(400);
       resumePath = writePlaceholderPdf(path.join(dir, 'resume.pdf'), `Resume — ${job.company} ${job.title}`);
       coverPath = writePlaceholderPdf(path.join(dir, 'cover-letter.pdf'), `Cover letter — ${job.company}`);
-      answers = {
-        'Are you authorized to work in the US?': 'Yes',
-        'Are you willing to relocate?': 'Yes',
-        'Salary expectation': 'FLAGGED_FOR_USER',
-      };
+      answers = resolveScreeningAnswers(ctx.repoRoot, ctx.standing.get());
       archiveDir = path.join('applications', String(app.id));
     } else {
       const identity = identityFor(ctx);
@@ -253,9 +256,17 @@ export const tailorWorker: Worker = {
         problems: ats.problems,
       });
 
-      // Screening answers from 08-application-forms.md defaults (flagged rows stay flagged).
-      answers = screeningAnswers(ctx.repoRoot);
-      for (const flag of draft.flags) answers[`FLAG: ${flag.slice(0, 160)}`] = 'FLAGGED_FOR_USER';
+      // Screening answers: standing answers → 08-application-forms.md defaults
+      // → structured needs-user markers. Nothing is invented at any layer.
+      answers = resolveScreeningAnswers(ctx.repoRoot, ctx.standing.get());
+      for (const flag of draft.flags) {
+        const question = `FLAG: ${flag.slice(0, 160)}`;
+        answers[question] = {
+          status: 'needs_user',
+          question,
+          hint: 'The drafter could not ground this in your profile. Answer it here or leave the application for manual review.',
+        };
+      }
 
       // Upstream-style archive (documents/applications/<company>_<role>/).
       archiveDir = writeApplicationArchive(ctx.repoRoot, {
@@ -272,23 +283,49 @@ export const tailorWorker: Worker = {
       });
     }
 
+    // Gate decision (D1) — now that the answers exist, the gate can tell
+    // "nothing left to decide" from "waiting on the user".
+    const resolved = allAnswersResolved(answers);
+    const pending = unresolvedQuestions(answers);
+    const gate = decideGate(settings, {
+      source: job.source,
+      fitScore: job.fitScore,
+      legitVerdict: job.legitVerdict as never,
+      answersResolved: resolved,
+    });
+
     // Job first: updateApplication emits application.updated with the job
     // fetched at emit time, so the job row must already be current.
     updateJob(ctx, job.id, { status: 'ready_for_review' });
     updateApplication(ctx, app.id, {
       status: 'ready_for_review',
+      gate: gate.mode,
       resumePath,
       coverLetterPath: coverPath,
       answersJson: answers ? JSON.stringify(answers) : null,
       archiveDir,
     });
-    addAudit(ctx, app.id, 'tailor.finished', { simulated: ctx.simulate, gateReason: gate.reason, atsOk });
+    addAudit(ctx, app.id, 'tailor.finished', {
+      simulated: ctx.simulate,
+      gateReason: gate.reason,
+      atsOk,
+      answersResolved: resolved,
+      unresolved: pending,
+    });
 
-    // Gate decision (D1). A failed ATS check always forces human review.
+    // A failed ATS check always forces human review.
     if (gate.autoSubmit && atsOk) {
-      updateApplication(ctx, app.id, { approvedAt: new Date().toISOString() });
-      addAudit(ctx, app.id, 'gate.auto_approved', { reason: gate.reason });
+      updateApplication(ctx, app.id, {
+        approvedAt: new Date().toISOString(),
+        autoSubmitted: gate.viaResolved ? 1 : 0,
+      });
+      addAudit(ctx, app.id, 'gate.auto_approved', { reason: gate.reason, viaResolved: gate.viaResolved === true });
       ctx.queue.enqueue('apply', { payload: { applicationId: app.id } });
+      ctx.bus.emit({
+        type: 'toast',
+        level: 'info',
+        message: `${job.company} — ${job.title} submitting automatically (every question resolved)`,
+      });
     } else {
       if (gate.autoSubmit && !atsOk) {
         addAudit(ctx, app.id, 'gate.forced_review', { reason: 'ATS verification failed — auto-submit suppressed' });
@@ -296,7 +333,9 @@ export const tailorWorker: Worker = {
       ctx.bus.emit({
         type: 'toast',
         level: 'info',
-        message: `${job.company} — ${job.title} is ready for review`,
+        message: pending.length > 0
+          ? `${job.company} — ${job.title} needs ${pending.length} answer${pending.length === 1 ? '' : 's'} from you`
+          : `${job.company} — ${job.title} is ready for review`,
       });
     }
   },

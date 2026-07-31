@@ -4,8 +4,9 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  FileText, Loader2, PencilLine, Save, UserRound, X,
+  ClipboardList, FileText, Loader2, PencilLine, Save, UserRound, X,
 } from 'lucide-react';
+import type { StandingAnswerKey, StandingAnswers } from '@shared';
 import { api } from '@/api/client';
 import { useStore } from '@/store/useStore';
 import { fmtRelative } from '@/lib/format';
@@ -156,6 +157,144 @@ function ContactSection() {
   );
 }
 
+/* --------------------------- Standing answers form --------------------------- */
+type FieldSpec = { key: StandingAnswerKey; label: string; placeholder: string; wide?: boolean; numeric?: boolean };
+
+const ANSWER_GROUPS: { title: string; note: string; fields: FieldSpec[] }[] = [
+  {
+    title: 'Compensation & timing',
+    note: 'Homer never puts a number here on your behalf.',
+    fields: [
+      { key: 'salaryExpectation', label: 'Salary expectations', placeholder: 'e.g. Open, targeting market rate for the role', wide: true },
+      { key: 'salaryMinAcceptable', label: 'Minimum acceptable (optional)', placeholder: 'e.g. 80000', numeric: true },
+      { key: 'earliestStartDate', label: 'Earliest start date', placeholder: 'e.g. Two weeks from an offer' },
+      { key: 'noticePeriod', label: 'Notice period', placeholder: 'e.g. None' },
+    ],
+  },
+  {
+    title: 'Work authorization',
+    note: 'Your words, verbatim. Citizenship is never inferred from anything else in your profile.',
+    fields: [
+      { key: 'citizenshipStatus', label: 'Citizenship / status', placeholder: 'e.g. Authorized to work in the US for any employer', wide: true },
+      { key: 'requiresSponsorship', label: 'Requires sponsorship', placeholder: 'yes or no' },
+      { key: 'securityClearance', label: 'Security clearance', placeholder: 'e.g. None' },
+      { key: 'willingToRelocate', label: 'Willing to relocate', placeholder: 'e.g. Yes, anywhere in the US' },
+    ],
+  },
+  {
+    title: 'Voluntary EEO',
+    note: '“Prefer not to say” is always a valid answer and is the default.',
+    fields: [
+      { key: 'eeoRace', label: 'Race / ethnicity', placeholder: 'Prefer not to say' },
+      { key: 'eeoGender', label: 'Gender', placeholder: 'Prefer not to say' },
+      { key: 'eeoVeteran', label: 'Veteran status', placeholder: 'Prefer not to say' },
+      { key: 'eeoDisability', label: 'Disability status', placeholder: 'Prefer not to say' },
+    ],
+  },
+  {
+    title: 'Other',
+    note: 'Optional. Blank stays blank.',
+    fields: [
+      { key: 'preferredPronouns', label: 'Preferred pronouns', placeholder: 'left blank unless you set it' },
+      { key: 'referencesAvailable', label: 'References', placeholder: 'e.g. Available on request' },
+    ],
+  },
+];
+
+function StandingAnswersSection() {
+  const pushToast = useStore((s) => s.pushToast);
+  const setMissingStanding = useStore((s) => s.setMissingStanding);
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [loaded, setLoaded] = useState<Record<string, string> | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const toForm = (a: StandingAnswers): Record<string, string> =>
+    Object.fromEntries(Object.entries(a).map(([k, v]) => [k, v == null ? '' : String(v)]));
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .getStandingAnswers()
+      .then((r) => {
+        if (!alive) return;
+        setForm(toForm(r.answers));
+        setLoaded(toForm(r.answers));
+        setMissingStanding(r.missingCritical);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [setMissingStanding]);
+
+  const dirty = loaded != null && Object.keys(form).some((k) => (form[k] ?? '') !== (loaded[k] ?? ''));
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const body: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(form)) {
+        if ((loaded?.[k] ?? '') === v) continue;
+        if (k === 'salaryMinAcceptable') body[k] = v.trim() === '' ? null : Number(v.replace(/[^\d.]/g, ''));
+        else body[k] = v;
+      }
+      const r = await api.putStandingAnswers(body as Partial<StandingAnswers>);
+      setForm(toForm(r.answers));
+      setLoaded(toForm(r.answers));
+      setMissingStanding(r.missingCritical);
+      pushToast('success', 'Application answers saved — reused on every application from now on');
+    } catch (e) {
+      pushToast('error', `Save failed: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div>
+      <p className="text-xs font-semibold text-ink uppercase tracking-wide mb-1 inline-flex items-center gap-1.5">
+        <ClipboardList className="h-3.5 w-3.5 text-accent" /> Application answers
+      </p>
+      <p className="text-[11px] text-ink-3 mb-2.5 leading-relaxed">
+        Answer these once and every application reuses them. Anything left blank keeps its question flagged, and an
+        application that hits a flagged question waits for you instead of guessing.
+      </p>
+      <div className="space-y-3.5">
+        {ANSWER_GROUPS.map((g) => (
+          <div key={g.title}>
+            <div className="flex items-baseline gap-2 mb-1.5">
+              <p className="text-[11px] font-semibold text-ink-2 uppercase tracking-wide">{g.title}</p>
+              <p className="text-[11px] text-ink-3">{g.note}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 max-[860px]:grid-cols-1">
+              {g.fields.map((f) => (
+                <label key={f.key} className={cn('block', f.wide && 'col-span-2 max-[860px]:col-span-1')}>
+                  <span className="text-[11px] text-ink-3">
+                    {f.label}
+                    {(form[f.key] ?? '') === '' && <span className="text-warn ml-1.5">not answered</span>}
+                  </span>
+                  <Input
+                    value={form[f.key] ?? ''}
+                    placeholder={f.placeholder}
+                    inputMode={f.numeric ? 'numeric' : undefined}
+                    onChange={(e) => setForm((prev) => ({ ...prev, [f.key]: e.target.value }))}
+                    className="mt-0.5"
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex justify-end mt-2.5">
+        <Button size="sm" disabled={!dirty || saving} onClick={() => void save()}>
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save answers
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function ProfileModal({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const profile = useStore((s) => s.profile);
   const [editing, setEditing] = useState<string | null>(null);
@@ -191,6 +330,7 @@ export function ProfileModal({ open, onOpenChange }: { open: boolean; onOpenChan
         ) : (
           <div className="mt-4 space-y-5">
             <ContactSection />
+            <StandingAnswersSection />
 
             <div>
               <p className="text-xs font-semibold text-ink uppercase tracking-wide mb-2">

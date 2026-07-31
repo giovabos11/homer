@@ -22,6 +22,12 @@ export interface AgentRunOptions {
    */
   model?: string;
   timeoutMs?: number;
+  /** Claude Code --permission-mode (acceptEdits, plan, …). Unset = CLI default. */
+  permissionMode?: string;
+  /** Appended to the system prompt (--append-system-prompt). Single line. */
+  appendSystemPrompt?: string;
+  /** Aborting kills the spawned CLI process tree and rejects with AbortError. */
+  signal?: AbortSignal;
   onEvent?: (e: AgentEvent) => void;
 }
 

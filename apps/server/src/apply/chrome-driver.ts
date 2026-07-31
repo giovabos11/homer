@@ -7,6 +7,7 @@
 // walks the user through the form at human pace, and the user resolves the
 // task from the dashboard when done. LinkedIn applies are always review-gated
 // and human-paced (PRD §8 — the AIHawk precedent).
+import { isNeedsUserAnswer } from '@shared/types';
 import { ApplyBlocked, type ApplyDriver, type ApplyOutcome, type ApplyRunArgs } from './driver';
 
 export class ChromeApplyDriver implements ApplyDriver {
@@ -14,6 +15,12 @@ export class ChromeApplyDriver implements ApplyDriver {
 
   async apply(args: ApplyRunArgs): Promise<ApplyOutcome> {
     const p = args.profile;
+    const answered: Record<string, string> = {};
+    const stillYours: string[] = [];
+    for (const [question, value] of Object.entries(p.answers)) {
+      if (isNeedsUserAnswer(value) || value === 'FLAGGED_FOR_USER') stillYours.push(question);
+      else if (typeof value === 'string') answered[question] = value;
+    }
     const staged = {
       name: p.fullName,
       email: p.email,
@@ -22,7 +29,7 @@ export class ChromeApplyDriver implements ApplyDriver {
       links: p.links,
       resumePdf: p.resumePath,
       coverLetterPdf: p.coverLetterPath,
-      screeningAnswers: p.answers,
+      screeningAnswers: answered,
     };
     throw new ApplyBlocked(
       [
@@ -30,7 +37,9 @@ export class ChromeApplyDriver implements ApplyDriver {
         `1. Open a Claude session with the Claude in Chrome extension connected.`,
         `2. Navigate to ${args.target.url} in your own Chrome (stay logged in as yourself).`,
         `3. Fill the form at human pace using the pre-staged data below; upload the tailored PDFs.`,
-        `4. Answer nothing marked FLAGGED_FOR_USER without deciding it yourself (salary, start date, citizenship).`,
+        stillYours.length > 0
+          ? `4. Decide these yourself, Homer never answers them: ${stillYours.join('; ')}.`
+          : `4. Every screening answer resolved from your profile and standing answers; still check them before sending.`,
         `5. Submit only if you (the human) are satisfied, then resolve this task on the dashboard.`,
         `Pre-staged data: ${JSON.stringify(staged)}`,
       ].join('\n'),

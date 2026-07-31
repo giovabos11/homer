@@ -39,9 +39,22 @@ All request/response shapes use the types in `apps/shared/types.ts`. All respons
 ## Applications
 - `GET  /api/applications?status&q&limit&offset` → `{ total: number, applications: Application[] }` (default limit 50, max 500; ordered by last update)
 - `PATCH /api/applications/:id` body `{ status?, notes? }` → `Application` (kanban drag = status change)
-- `POST /api/applications/:id/approve` → `{ taskId }` — user approval at the submit gate (FR-9/D1)
+- `PATCH /api/applications/:id/answers` body `{ answers: Record<string,string>, saveStanding?: string[] }` → `{ application, unresolved: string[], savedAsStanding: StandingAnswerKey[] }` — edit the pre-drafted screening answers from the review modal. Blank values never clear a `needs_user` marker. Questions listed in `saveStanding` are also written to the standing answers (mapped to their standing key), so answering once fixes the question forever.
+- `POST /api/applications/:id/approve` → `{ taskId }` — user approval at the submit gate (FR-9/D1). **409 `answers_unresolved`** while any answer is still a `{ status: 'needs_user' }` marker.
 - `POST /api/applications/:id/reject` body `{ reason }` → `Application` (back to tailoring or skipped)
-- `GET  /api/applications/:id/artifacts` → `{ resumeUrl, coverLetterUrl, screenshots: string[], answers }` (PDFs served under `/files/...`)
+- `GET  /api/applications/:id/artifacts` → `{ resumeUrl, coverLetterUrl, screenshots: string[], answers }` (PDFs served under `/files/...`). `answers` values are either a plain string or `{ status: 'needs_user', question, hint?, suggestion?, standingKey? }` — legacy rows holding the literal `FLAGGED_FOR_USER` sentinel are normalized to that marker on read.
+- `Application.autoSubmitted` is true when the gate submitted without a human click (the Applied card shows a "Submitted automatically" marker).
+
+## Standing answers
+"Answer once, reuse forever" values only the candidate can supply. Resolution order for every screening question: **standing answer → profile rule (the `Candidate screening defaults` table in `08-application-forms.md`, which the server only ever READS) → `needs_user` marker**. Stored in the `standing_answers` table as normal data: a `POST /api/reset` with scope `db` wipes it, and nothing is ever auto-populated.
+- `GET /api/standing-answers` → `{ answers: StandingAnswers, missingCritical: StandingAnswerKey[] }` (`missingCritical` = salary / start date / work authorization still unset — drives the Home nudge)
+- `PUT /api/standing-answers` body `Partial<StandingAnswers>` (partial patch, strict) → same shape. Keys: `salaryExpectation`, `salaryMinAcceptable` (number|null), `earliestStartDate`, `noticePeriod`, `citizenshipStatus`, `requiresSponsorship` (`''|yes|no`), `securityClearance`, `eeoRace|eeoGender|eeoVeteran|eeoDisability` (default `Prefer not to say`), `willingToRelocate`, `preferredPronouns`, `referencesAvailable`.
+
+## Discovery sources
+`source_budgets.enabled` is the runtime authority for **scheduled** discovery; a skill's `enabled:` frontmatter only seeds the flag the first time that source is seen, so a dashboard toggle is never reverted at the next boot. A manual `POST /api/search` with an explicit `sources` list always wins. Key-gated sources (adzuna, usajobs) stay excluded while their API key is missing, whatever the toggle says.
+- `GET  /api/sources` → `SourceBudget[]` (each row carries `enabled`, `keyGated`, `blockedReason`)
+- `PATCH /api/sources/:source` body `{ enabled: boolean }` → the updated `SourceBudget`; emits `queue.snapshot` + `connection.updated`
+- `GET /api/queue`'s `budgets` carry the same enriched rows.
 
 ## Search & queue
 - `POST /api/search` body `{ keywords, experience?, remote?: RemoteType, location?, sources?: string[] }` → `{ searchId }`; results stream as `job.discovered` SSE events  (FR-3)
@@ -52,8 +65,10 @@ All request/response shapes use the types in `apps/shared/types.ts`. All respons
 - `POST /api/queue/pause` / `POST /api/queue/resume` → queue snapshot
 - `POST /api/queue/rate` body `{ discoveryIntervalMinutes }` → `Settings`
 - `POST /api/queue/retry-failed` body `{ type?: TaskType }` → `{ requeued: number }` — bulk retry: every failed task (optionally filtered to one type) back to `pending` with `attempts` reset to 0; explicit user cancellations (`lastError: 'Cancelled by user'`) are left alone. Emits a fresh `queue.snapshot`.
-- `POST /api/queue/tasks/:id/resolve-human` → `QueueTask` (user did the manual step; worker resumes)  (FR-25)
-- `POST /api/queue/tasks/:id/retry` / `POST /api/queue/tasks/:id/cancel` → `QueueTask`
+- `POST /api/queue/tasks/:id/resolve-human` body `{ answers?: Record<string,string> }` → `QueueTask` (user did the manual step; worker resumes)  (FR-25). When the parked task is an `apply` and its payload carries `choices` (the field's REAL option list the driver refused to guess at), `answers` records the user's picks onto the application's screening answers before resuming.
+- `POST /api/queue/tasks/:id/retry` → `QueueTask`
+- `POST /api/queue/tasks/:id/cancel` → `QueueTask & { aborted: boolean }` — cancels **pending AND running** tasks: the in-flight `AbortController` kills the spawned Claude CLI process tree, the slot frees, and the task becomes `failed` with `lastError: 'Cancelled by user'` (bulk retry always skips those). A cancelled `tailor` rolls its job back to `screened`.
+- `POST /api/queue/cancel-all` body `{ scope: 'running' | 'pending' | 'all', type?: TaskType }` → `{ cancelled: number }`
 - Zombie recovery (server-side, no endpoint): on boot every `running` claim is requeued to `pending` (`attempts` preserved, `lastError: 'reclaimed after stale run'`), and a periodic sweep requeues `running` tasks whose `updatedAt` is older than 10 minutes. Jobs stuck in `tailoring` with no live tailor task revert to `screened` (toast + `job.scored` SSE).
 
 ## Emails & outbox
@@ -80,10 +95,12 @@ All request/response shapes use the types in `apps/shared/types.ts`. All respons
 ## Feedback, ask, settings, reset
 - `POST /api/feedback` body `{ kind: FeedbackKind, text }` → `FeedbackEntry` (response fills in async; `feedback.updated` via toast/SSE)  (FR-26/27)
 - `GET  /api/feedback` → `FeedbackEntry[]`
+- `DELETE /api/feedback/:id` → `{ ok: true }`
+- `DELETE /api/feedback?kind=<FeedbackKind>` → `{ deleted: number }` (omit `kind` to clear all). Deleting an entry whose plan change was already applied never reverts that settings change.
 - `POST /api/feedback/:id/apply-plan` → `FeedbackEntry` (applies proposed plan change)
-- `POST /api/ask` body `{ prompt }` → `{ requestId }`; stream via `ask.delta` SSE events  (FR-29). Conversational: the server stores the ask session id and resumes it on every ask.
+- `POST /api/ask` body `{ prompt }` → `{ requestId }`; stream via `ask.delta` SSE events  (FR-29). Conversational: the server stores the ask session id and resumes it on every ask. **The chat can edit profile and search-query files within a safe-list (`CLAUDE.md`, `documents/**.md|.txt`, `.claude/skills/job-application-assistant/*.md`, `.claude/skills/job-scraper/search-queries.md`) with no interactive approval** — the run carries path-scoped `Edit`/`Write` permission rules plus a system note that no approval prompt exists in a headless session, and any write outside the safe-list is reverted and reported. A turn that edited files appends the file list to the reply, toasts, and (for `search-queries.md`) suggests re-running discovery; the dashboard refetches `/api/profile` when the turn completes.
 - `POST /api/ask/clear` → `{ ok: true }` — drops the stored ask session; the next ask starts a fresh conversation.
-- `GET  /api/settings` / `PATCH /api/settings` body `Partial<Settings>` → `Settings` — includes the granular per-task model routing keys `modelAsk` (default `haiku`), `modelSetup` (`sonnet`), `modelScraper` (`haiku`), `modelScore` (`haiku`), `modelTailor` (`sonnet`), `modelPrep` (`sonnet`), `modelEmail` (`haiku`), `modelFollowup` (`sonnet`), `modelFeedback` (`sonnet`); values `default | haiku | sonnet | opus` (`default` = the user's own Claude Code model, possibly Opus — selectable but no task's default). The legacy `modelPipeline` key is migrated at boot: if its settings row exists, its value seeds the six new score/tailor/prep/email/followup/feedback keys once, then the row is deleted (fresh installs get the recommended defaults). Also `queueConcurrency` (1-4, default 2 — parallel agent-bound tasks in the runner) and the pipeline auto-advance keys `autoAdvance` (`off | threshold | all`, default `threshold`) and `autoAdvanceThreshold` (default 70): screened jobs that are legit, not location-vetoed, and meet the gate flow into tailoring automatically; submission still obeys the submit gate. Loosening the auto-advance gate triggers an immediate backfill sweep.
+- `GET  /api/settings` / `PATCH /api/settings` body `Partial<Settings>` → `Settings` — includes the granular per-task model routing keys `modelAsk` (default `haiku`), `modelSetup` (`sonnet`), `modelScraper` (`haiku`), `modelScore` (`haiku`), `modelTailor` (`sonnet`), `modelPrep` (`sonnet`), `modelEmail` (`haiku`), `modelFollowup` (`sonnet`), `modelFeedback` (`sonnet`); values `default | haiku | sonnet | opus` (`default` = the user's own Claude Code model, possibly Opus — selectable but no task's default). The legacy `modelPipeline` key is migrated at boot: if its settings row exists, its value seeds the six new score/tailor/prep/email/followup/feedback keys once, then the row is deleted (fresh installs get the recommended defaults). Also `autoSubmitWhenResolved` (default true — layered on the submit gate: in `review`, an application whose screening answers ALL resolved, whose fit/legitimacy passed and whose ATS check passed submits without a review card; `hybrid` additionally needs the score threshold; anything unresolved still waits, and LinkedIn is always review-gated), `queueConcurrency` (1-4, default 2 — parallel agent-bound tasks in the runner) and the pipeline auto-advance keys `autoAdvance` (`off | threshold | all`, default `threshold`) and `autoAdvanceThreshold` (default 70): screened jobs that are legit, not location-vetoed, and meet the gate flow into tailoring automatically; submission still obeys the submit gate. Loosening the auto-advance gate triggers an immediate backfill sweep.
 - `POST /api/reset` body `{ confirmation: 'RESET', scopes: ('db'|'artifacts'|'profile')[] }` → `{ preview?: string[], ok?: true }`; call with `{ preview: true }` first to get the deletion preview  (FR-28)
 
 ## Events

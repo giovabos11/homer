@@ -5,8 +5,11 @@
 // flight — an apply task may still run alongside agent tasks. Claims stay
 // atomic (UPDATE … RETURNING with a type filter), and each slot is
 // error-isolated: one crashing task can never take down the loop.
+import { eq } from 'drizzle-orm';
 import type { TaskType } from '@shared/types';
 import type { AppContext } from '../context';
+import type { AgentRunner } from '../agent/types';
+import { jobs } from '../db/schema';
 import { PauseRequested, NeedsHuman, WaitingSession, getWorker } from '../workers/registry';
 import { toQueueTask } from '../db/serialize';
 import type { TaskRow } from './queue';
@@ -22,6 +25,11 @@ const AGENT_TYPES: TaskType[] = [
 
 export const MIN_CONCURRENCY = 1;
 export const MAX_CONCURRENCY = 4;
+
+/** Wrap an AgentRunner so every call it makes inherits the task's abort signal. */
+function withSignal(runner: AgentRunner, signal: AbortSignal): AgentRunner {
+  return { run: (opts) => runner.run({ ...opts, signal: opts.signal ?? signal }) };
+}
 
 export class QueueRunner {
   private timer: NodeJS.Timeout | null = null;
@@ -102,6 +110,10 @@ export class QueueRunner {
       const row = this.ctx.queue.get(id);
       if (row) this.ctx.bus.emit({ type: 'queue.updated', task: toQueueTask(row) });
     };
+    // Per-task cancellation: every agent call this worker makes runs under the
+    // same signal, so cancelling kills the spawned CLI instead of orphaning it.
+    const controller = this.ctx.cancellations.register(task.id);
+    const scopedCtx: AppContext = { ...this.ctx, runner: withSignal(this.ctx.runner, controller.signal) };
     try {
       emitTask(task.id);
       try {
@@ -110,17 +122,22 @@ export class QueueRunner {
           this.ctx.queue.fail(task.id, `No worker registered for type ${task.type}`);
         } else {
           await worker.run({
-            ctx: this.ctx,
+            ctx: scopedCtx,
             task,
             paused: () => this.ctx.queue.isPaused() || this.stopped,
             saveCursor: (cursor) => this.ctx.queue.saveCursor(task.id, cursor),
+            signal: controller.signal,
           });
-          this.ctx.queue.complete(task.id);
+          if (controller.signal.aborted) this.finishCancelled(task);
+          else this.ctx.queue.complete(task.id);
         }
       } catch (err) {
-        if (err instanceof PauseRequested) {
+        if (controller.signal.aborted) {
+          this.finishCancelled(task);
+        } else if (err instanceof PauseRequested) {
           this.ctx.queue.pauseTask(task.id);
         } else if (err instanceof NeedsHuman) {
+          if (err.payload) this.ctx.queue.mergePayload(task.id, err.payload);
           const row = this.ctx.queue.needsHuman(task.id, err.prompt);
           this.ctx.bus.emit({ type: 'task.needs_human', task: toQueueTask(row) });
         } else if (err instanceof WaitingSession) {
@@ -136,7 +153,28 @@ export class QueueRunner {
       // reclaims the task if it was left 'running'.
       console.error(`[runner] task ${task.id} (${task.type}) bookkeeping failed:`, err);
     } finally {
+      this.ctx.cancellations.release(task.id);
       this.inFlight.delete(task.id);
+    }
+  }
+
+  /**
+   * A cancelled task keeps the 'Cancelled by user' marker (so bulk retry skips
+   * it) and leaves no half-finished pipeline state behind: a job abandoned
+   * mid-tailor goes back to 'screened' so it can be re-queued cleanly.
+   */
+  private finishCancelled(task: TaskRow): void {
+    this.ctx.queue.cancel(task.id);
+    if (task.type !== 'tailor') return;
+    try {
+      const payload = JSON.parse(task.payloadJson) as { jobId?: number };
+      if (payload.jobId == null) return;
+      const job = this.ctx.db.select().from(jobs).where(eq(jobs.id, payload.jobId)).get();
+      if (job?.status === 'tailoring') {
+        this.ctx.db.update(jobs).set({ status: 'screened' }).where(eq(jobs.id, payload.jobId)).run();
+      }
+    } catch {
+      /* rollback is best-effort; the recovery sweep is the backstop */
     }
   }
 

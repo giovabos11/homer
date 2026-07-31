@@ -7,6 +7,14 @@ import { applications, jobs } from '../db/schema';
 import { toApplication } from '../db/serialize';
 import { addAudit, updateApplication, updateJob } from '../workers/helpers';
 import { PRIORITY } from '../queue/queue';
+import {
+  answersResolved,
+  normalizeAnswers,
+  standingKeyForQuestion,
+  unresolvedQuestions,
+} from '../docs/screening';
+import { STANDING_ANSWER_KEYS } from '../docs/standing';
+import type { ScreeningAnswerValue, StandingAnswerKey, StandingAnswers } from '@shared/types';
 import type { AppContext } from '../context';
 import { ApiError, idParam, parseBody, parseQuery } from './util';
 
@@ -79,6 +87,60 @@ export function applicationRoutes(ctx: AppContext): Router {
     res.json(toApplication(row, job));
   });
 
+  /**
+   * Edit the pre-drafted screening answers (FR-9). Every answer in the review
+   * modal is editable; the ones marked needs_user MUST be filled before the
+   * application can be approved. `saveStanding` promotes an answer to a
+   * standing answer so the same question never has to be answered again.
+   */
+  router.patch('/applications/:id/answers', (req, res) => {
+    const id = idParam(req);
+    const body = parseBody(
+      z.object({
+        answers: z.record(z.string(), z.string()),
+        saveStanding: z.array(z.string()).optional(),
+      }),
+      req,
+    );
+    const existing = ctx.db.select().from(applications).where(eq(applications.id, id)).get();
+    if (!existing) throw new ApiError(404, 'not_found', `No application ${id}`);
+
+    const current = normalizeAnswers(
+      existing.answersJson ? (JSON.parse(existing.answersJson) as Record<string, unknown>) : {},
+    );
+    const next: Record<string, ScreeningAnswerValue> = { ...current };
+    const changed: string[] = [];
+    for (const [question, value] of Object.entries(body.answers)) {
+      const text = value.trim();
+      if (text === '') continue; // blank never clears a needs-user marker
+      next[question] = text;
+      changed.push(question);
+    }
+
+    // Promote to standing answers (default-on for the known standing keys).
+    const standingPatch: Partial<StandingAnswers> = {};
+    const promoted: StandingAnswerKey[] = [];
+    for (const question of body.saveStanding ?? []) {
+      const value = body.answers[question]?.trim();
+      if (!value) continue;
+      const key = standingKeyForQuestion(question);
+      if (!key || !STANDING_ANSWER_KEYS.includes(key)) continue;
+      if (key === 'salaryMinAcceptable') continue; // numeric-only, set from the profile modal
+      (standingPatch as Record<string, unknown>)[key] = value;
+      promoted.push(key);
+    }
+    if (promoted.length > 0) ctx.standing.patch(standingPatch);
+
+    const row = updateApplication(ctx, id, { answersJson: JSON.stringify(next) });
+    addAudit(ctx, id, 'answers.edited', { changed, savedAsStanding: promoted });
+    const job = ctx.db.select().from(jobs).where(eq(jobs.id, existing.jobId)).get();
+    res.json({
+      application: toApplication(row, job),
+      unresolved: unresolvedQuestions(next),
+      savedAsStanding: promoted,
+    });
+  });
+
   // FR-9/D1: the user approval click at the submit gate.
   router.post('/applications/:id/approve', (req, res) => {
     const id = idParam(req);
@@ -86,6 +148,17 @@ export function applicationRoutes(ctx: AppContext): Router {
     if (!existing) throw new ApiError(404, 'not_found', `No application ${id}`);
     if (existing.status !== 'ready_for_review') {
       throw new ApiError(409, 'invalid_state', `Application ${id} is ${existing.status}, not ready_for_review`);
+    }
+    const answers = normalizeAnswers(
+      existing.answersJson ? (JSON.parse(existing.answersJson) as Record<string, unknown>) : {},
+    );
+    if (!answersResolved(answers)) {
+      const pending = unresolvedQuestions(answers);
+      throw new ApiError(
+        409,
+        'answers_unresolved',
+        `${pending.length} screening question(s) still need your answer: ${pending.slice(0, 3).join('; ')}`,
+      );
     }
     updateApplication(ctx, id, { approvedAt: new Date().toISOString() });
     addAudit(ctx, id, 'gate.user_approved', {});
@@ -130,7 +203,10 @@ export function applicationRoutes(ctx: AppContext): Router {
       resumeUrl: asUrl(existing.resumePath),
       coverLetterUrl: asUrl(existing.coverLetterPath),
       screenshots: audit.map((a) => a.screenshot).filter((s): s is string => typeof s === 'string'),
-      answers: existing.answersJson ? JSON.parse(existing.answersJson) : null,
+      // Legacy rows carried the raw sentinel; the modal only ever sees markers.
+      answers: existing.answersJson
+        ? normalizeAnswers(JSON.parse(existing.answersJson) as Record<string, unknown>)
+        : null,
     });
   });
 

@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
+import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, Download, Gauge, HandHelping,
+  AlertTriangle, Ban, ChevronDown, ChevronLeft, ChevronRight, Download, Gauge, HandHelping,
   Link2, Loader2, Pause, PenLine, Play, Radar, RotateCcw, Search as SearchIcon, Table2,
   Wand2, XCircle,
 } from 'lucide-react';
-import type { Job, JobStatus, QueueTask, RemoteType } from '@shared';
+import type { Job, JobStatus, QueueTask, RemoteType, SourceBudget } from '@shared';
 import { api } from '@/api/client';
 import { useStore } from '@/store/useStore';
 import { downloadCsv } from '@/lib/csv';
+import { cn } from '@/lib/utils';
 import { humanizeTask } from '@/lib/tasks';
 import { fmtRelative, REMOTE_LABEL, salaryLabel, STATUS_LABEL, titleCase } from '@/lib/format';
 import { Card, CardHeader, EmptyState, PageHeader } from '@/components/common/layout';
@@ -16,7 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input, Textarea } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Checkbox, Progress, Slider, Tip } from '@/components/ui/controls';
+import { Checkbox, Progress, Slider, Switch, Tip } from '@/components/ui/controls';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { FitRing } from '@/components/common/rings';
 import { LegitBadge, SourceIcon, StatusPill, sourceLabel } from '@/components/common/chips';
@@ -388,13 +390,163 @@ function PlainTaskRow({ t }: { t: QueueTask }) {
         </Tip>
       )}
       <Badge variant={t.state === 'waiting_session' ? 'violet' : 'default'}>{titleCase(t.state)}</Badge>
-      {t.state === 'pending' && (
-        <Tip label="Cancel">
+      {(t.state === 'pending' || t.state === 'running') && (
+        <Tip label={t.state === 'running' ? 'Stop this task (kills its Claude process)' : 'Cancel'}>
           <button className="text-ink-3 hover:text-critical cursor-pointer" onClick={() => void api.cancelTask(t.id)}>
             <XCircle className="h-3.5 w-3.5" />
           </button>
         </Tip>
       )}
+    </div>
+  );
+}
+
+/* --------------------------- Needs-attention card --------------------------- */
+interface TaskChoice {
+  question: string;
+  options: { value: string; label: string }[];
+  answer?: string;
+}
+
+/**
+ * A parked task. When the apply driver could not map an answer onto a field's
+ * real options, those options ride along on the task payload — render them as
+ * buttons so one click both answers the question and resumes the task.
+ */
+function NeedsHumanCard({ t, label }: { t: QueueTask; label: string }) {
+  const pushToast = useStore((s) => s.pushToast);
+  const [picked, setPicked] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const choices = (t.payload?.choices as TaskChoice[] | undefined) ?? [];
+  const answered = choices.every((c) => picked[c.question]);
+
+  const resolve = async () => {
+    setBusy(true);
+    try {
+      await api.resolveHuman(t.id, Object.keys(picked).length > 0 ? picked : undefined);
+    } catch (e) {
+      pushToast('error', `Could not resume: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.97 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className="rounded-lg border border-warn-raw/45 bg-warn-raw/10 p-3"
+    >
+      <div className="flex items-start gap-2.5">
+        <HandHelping className="h-4.5 w-4.5 text-warn shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-semibold text-ink">Your turn: {label}</p>
+          <p className="text-xs text-ink-2 mt-0.5 leading-relaxed whitespace-pre-wrap">{t.humanPrompt}</p>
+
+          {choices.length > 0 && (
+            <div className="mt-2.5 space-y-2">
+              {choices.map((c) => (
+                <div key={c.question} className="rounded-md border border-line bg-surface/70 px-2.5 py-2">
+                  <p className="text-[11px] text-ink-2">{c.question}</p>
+                  {c.answer && (
+                    <p className="text-[10px] text-ink-3 mt-0.5">Your answer, unmatched: “{c.answer}”</p>
+                  )}
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {c.options.map((o) => {
+                      const active = picked[c.question] === o.value;
+                      return (
+                        <button
+                          key={o.value + o.label}
+                          onClick={() => setPicked((p) => ({ ...p, [c.question]: o.value }))}
+                          className={cn(
+                            'rounded-md border px-2 py-1 text-[11px] transition-colors cursor-pointer',
+                            active
+                              ? 'border-accent/60 bg-accent/15 text-accent font-medium'
+                              : 'border-line text-ink-2 hover:border-line-strong hover:text-ink',
+                          )}
+                        >
+                          {o.label || o.value}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-2 flex gap-2">
+            <Button size="sm" disabled={busy || (choices.length > 0 && !answered)} onClick={() => void resolve()}>
+              {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {choices.length > 0 ? 'Use these answers — resume' : 'I did it — resume'}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => void api.cancelTask(t.id)}>
+              Cancel task
+            </Button>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+/* --------------------------- Discovery source toggles --------------------------- */
+function SourceRow({ b }: { b: SourceBudget }) {
+  const pushToast = useStore((s) => s.pushToast);
+  const refreshQueue = useStore((s) => s.refreshQueue);
+  const [busy, setBusy] = useState(false);
+  const cap = Math.max(1, b.refillPerHour * 8, b.remainingTokens);
+  const blocked = !!b.blockedReason;
+  const off = !b.enabled;
+
+  return (
+    <div className={cn('flex items-center gap-2.5', (off || blocked) && 'opacity-55')}>
+      <span
+        className="h-2 w-2 rounded-full shrink-0"
+        style={{
+          background: off || blocked
+            ? 'var(--line-strong)'
+            : b.health === 'ok' ? 'var(--good)' : b.health === 'degraded' ? 'var(--warn-raw)' : 'var(--critical)',
+        }}
+      />
+      <span className="text-xs text-ink-2 w-32 truncate shrink-0">{sourceLabel(b.source)}</span>
+      {blocked ? (
+        <span className="flex-1 text-[11px] text-ink-3">
+          {b.blockedReason}
+          {b.keyGated && (
+            <Link to="/connections" className="text-accent hover:underline ml-1">
+              Add a key
+            </Link>
+          )}
+        </span>
+      ) : off ? (
+        <span className="flex-1 text-[11px] text-ink-3">excluded from scheduled discovery</span>
+      ) : (
+        <Progress
+          value={b.remainingTokens / cap}
+          className="flex-1"
+          barClassName={b.health === 'down' ? 'bg-critical' : b.health === 'degraded' ? 'bg-warn-raw' : undefined}
+        />
+      )}
+      <span className="text-[11px] text-ink-3 tabular w-24 text-right shrink-0">
+        {blocked || off ? '' : b.health === 'down' ? 'backing off' : b.nextRun ? `next ${fmtRelative(b.nextRun)}` : 'ready'}
+      </span>
+      <Switch
+        checked={b.enabled && !blocked}
+        disabled={busy || blocked}
+        aria-label={`${b.enabled ? 'Disable' : 'Enable'} ${sourceLabel(b.source)} for scheduled discovery`}
+        onCheckedChange={async (v) => {
+          setBusy(true);
+          try {
+            await api.setSourceEnabled(b.source, v);
+            await refreshQueue();
+          } catch (e) {
+            pushToast('error', `Could not update ${b.source}: ${e instanceof Error ? e.message : e}`);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      />
     </div>
   );
 }
@@ -425,8 +577,10 @@ function QueuePanel() {
   const needsHuman = tasks.filter((t) => t.state === 'needs_human');
   const pendingTasks = tasks.filter((t) => ['pending', 'paused', 'waiting_session'].includes(t.state));
   const failed = tasks.filter((t) => t.state === 'failed' && t.lastError !== 'Cancelled by user');
+  const cancelled = tasks.filter((t) => t.state === 'failed' && t.lastError === 'Cancelled by user');
 
   const rateLabel = interval < 60 ? `${interval} min` : interval < 1440 ? `${Math.round(interval / 60)} h` : 'daily';
+  const activeCount = budgets.filter((b) => b.enabled && !b.blockedReason).length;
 
   return (
     <Card>
@@ -470,7 +624,7 @@ function QueuePanel() {
       />
       <div className="px-4 pb-4 space-y-4">
         {/* grouped task list — scrollable, load-more per group */}
-        {(running.length > 0 || needsHuman.length > 0 || pendingTasks.length > 0 || failed.length > 0) && (
+        {(running.length > 0 || needsHuman.length > 0 || pendingTasks.length > 0 || failed.length > 0 || cancelled.length > 0) && (
           <div className="max-h-[400px] overflow-y-auto space-y-3 pr-1">
             <TaskGroup
               label="Running"
@@ -482,32 +636,7 @@ function QueuePanel() {
               label="Needs attention"
               tone="var(--warn-raw)"
               tasks={needsHuman}
-              renderRow={(t) => (
-                <motion.div
-                  key={t.id}
-                  initial={{ opacity: 0, scale: 0.97 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="rounded-lg border border-warn-raw/45 bg-warn-raw/10 p-3"
-                >
-                  <div className="flex items-start gap-2.5">
-                    <HandHelping className="h-4.5 w-4.5 text-warn shrink-0 mt-0.5" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-ink">
-                        Your turn: {humanizeTask(t, jobs, applications)}
-                      </p>
-                      <p className="text-xs text-ink-2 mt-0.5 leading-relaxed">{t.humanPrompt}</p>
-                      <div className="mt-2 flex gap-2">
-                        <Button size="sm" onClick={() => void api.resolveHuman(t.id)}>
-                          I did it — resume
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => void api.cancelTask(t.id)}>
-                          Cancel task
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
+              renderRow={(t) => <NeedsHumanCard key={t.id} t={t} label={humanizeTask(t, jobs, applications)} />}
             />
             <TaskGroup
               label="Pending"
@@ -551,6 +680,25 @@ function QueuePanel() {
                     <p className="text-[11px] text-ink-3 mt-0.5 leading-relaxed break-words">{t.lastError}</p>
                   </div>
                   <Tip label="Retry now">
+                    <Button size="icon-sm" variant="ghost" onClick={() => void api.retryTask(t.id)}>
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    </Button>
+                  </Tip>
+                </div>
+              )}
+            />
+            <TaskGroup
+              label="Cancelled"
+              tone="var(--ink-3)"
+              tasks={cancelled}
+              defaultOpen={false}
+              renderRow={(t) => (
+                <div key={t.id} className="rounded-lg border border-line bg-overlay/40 p-3 flex items-center gap-2.5">
+                  <Ban className="h-4 w-4 text-ink-3 shrink-0" />
+                  <p className="text-xs text-ink-2 flex-1 min-w-0 truncate">
+                    {humanizeTask(t, jobs, applications)} — stopped by you
+                  </p>
+                  <Tip label="Run it again">
                     <Button size="icon-sm" variant="ghost" onClick={() => void api.retryTask(t.id)}>
                       <RotateCcw className="h-3.5 w-3.5" />
                     </Button>
@@ -607,27 +755,16 @@ function QueuePanel() {
             </Button>
           </div>
           <p className="text-[11px] text-ink-3 mb-2 -mt-1">
-            Queries drive what the scraper looks for — regenerate after profile changes.
+            Queries drive what the scraper looks for — regenerate after profile changes. Toggles choose which sources
+            the scheduled sweep uses; manual searches above always use what you pick there.
+          </p>
+          <p className="text-[11px] text-ink-2 mb-2 tabular">
+            {activeCount} of {budgets.length} sources active
           </p>
           <div className="space-y-2">
-            {budgets.filter((b) => b.enabled).map((b) => {
-              const cap = Math.max(1, b.refillPerHour * 8, b.remainingTokens);
-              return (
-                <div key={b.source} className="flex items-center gap-2.5">
-                  <span
-                    className="h-2 w-2 rounded-full shrink-0"
-                    style={{
-                      background: b.health === 'ok' ? 'var(--good)' : b.health === 'degraded' ? 'var(--warn-raw)' : 'var(--critical)',
-                    }}
-                  />
-                  <span className="text-xs text-ink-2 w-32 truncate shrink-0">{sourceLabel(b.source)}</span>
-                  <Progress value={b.remainingTokens / cap} className="flex-1" barClassName={b.health === 'down' ? 'bg-critical' : b.health === 'degraded' ? 'bg-warn-raw' : undefined} />
-                  <span className="text-[11px] text-ink-3 tabular w-24 text-right shrink-0">
-                    {b.health === 'down' ? 'backing off' : b.nextRun ? `next ${fmtRelative(b.nextRun)}` : 'ready'}
-                  </span>
-                </div>
-              );
-            })}
+            {budgets.map((b) => (
+              <SourceRow key={b.source} b={b} />
+            ))}
           </div>
         </div>
       </div>

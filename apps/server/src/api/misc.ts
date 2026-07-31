@@ -35,6 +35,7 @@ const settingsPatchSchema = z
     autoAdvance: z.enum(['off', 'threshold', 'all']),
     autoAdvanceThreshold: z.number().int().min(0).max(100),
     queueConcurrency: z.number().int().min(1).max(4),
+    autoSubmitWhenResolved: z.boolean(),
   })
   .partial()
   .strict();
@@ -61,6 +62,30 @@ export function miscRoutes(ctx: AppContext): Router {
 
   router.get('/feedback', (_req, res) => {
     res.json(ctx.db.select().from(feedback).orderBy(desc(feedback.id)).all().map(toFeedbackEntry));
+  });
+
+  // Delete one entry. An already-APPLIED plan change is a settings mutation
+  // that stands on its own — deleting the record never reverts it.
+  router.delete('/feedback/:id', (req, res) => {
+    const id = idParam(req);
+    const row = ctx.db.select().from(feedback).where(eq(feedback.id, id)).get();
+    if (!row) throw new ApiError(404, 'not_found', `No feedback ${id}`);
+    ctx.db.delete(feedback).where(eq(feedback.id, id)).run();
+    res.json({ ok: true });
+  });
+
+  // Clear history, optionally just one kind.
+  router.delete('/feedback', (req, res) => {
+    const kind = req.query.kind ? String(req.query.kind) : undefined;
+    if (kind && !['idea', 'concern', 'comment', 'update', 'retro'].includes(kind)) {
+      throw new ApiError(400, 'validation_error', `Unknown feedback kind: ${kind}`);
+    }
+    const rows = kind
+      ? ctx.db.select().from(feedback).where(eq(feedback.kind, kind)).all()
+      : ctx.db.select().from(feedback).all();
+    if (kind) ctx.db.delete(feedback).where(eq(feedback.kind, kind)).run();
+    else ctx.db.delete(feedback).run();
+    res.json({ deleted: rows.length });
   });
 
   router.post('/feedback/:id/apply-plan', (req, res) => {

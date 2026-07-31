@@ -28,6 +28,7 @@ export const SETTINGS_KEYS: (keyof Settings)[] = [
   'autoAdvance',
   'autoAdvanceThreshold',
   'queueConcurrency',
+  'autoSubmitWhenResolved',
 ];
 
 /** The keys the deprecated modelPipeline setting was split into. */

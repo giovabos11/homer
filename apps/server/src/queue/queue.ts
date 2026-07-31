@@ -24,6 +24,9 @@ export interface EnqueueOptions {
 /** Enqueue priority bands (PRD §11). */
 export const PRIORITY = { user: 10, autoAdvance: 5, bulk: 0 } as const;
 
+/** lastError marker for user cancellation — bulk retry always skips these. */
+export const CANCELLED_MARKER = 'Cancelled by user';
+
 const ACTIVE_STATES: TaskState[] = ['pending', 'running', 'paused', 'needs_human', 'waiting_session'];
 
 export class TaskQueue {
@@ -123,6 +126,25 @@ export class TaskQueue {
     return this.db.select().from(taskQueue).where(eq(taskQueue.id, id)).get() ?? null;
   }
 
+  /** Merge extra data into a task's payload (needs_human choice lists, …). */
+  mergePayload(id: number, patch: Record<string, unknown>): TaskRow | null {
+    const task = this.get(id);
+    if (!task) return null;
+    let payload: Record<string, unknown> = {};
+    try {
+      payload = JSON.parse(task.payloadJson) as Record<string, unknown>;
+    } catch {
+      payload = {};
+    }
+    const merged = { ...payload, ...patch };
+    this.db
+      .update(taskQueue)
+      .set({ payloadJson: JSON.stringify(merged), updatedAt: this.nowIso() })
+      .where(eq(taskQueue.id, id))
+      .run();
+    return this.get(id);
+  }
+
   /** Persist a worker's resume cursor mid-run. */
   saveCursor(id: number, cursor: Record<string, unknown> | null): void {
     this.db
@@ -180,7 +202,17 @@ export class TaskQueue {
 
   /** Cancel: terminal 'failed' with an explicit marker (TaskState has no separate cancelled state). */
   cancel(id: number): TaskRow {
-    return this.setState(id, 'failed', { lastError: 'Cancelled by user' });
+    return this.setState(id, 'failed', { lastError: CANCELLED_MARKER });
+  }
+
+  /** Every task in the given states (bulk cancel). */
+  listByState(states: TaskState[], type?: TaskType): TaskRow[] {
+    const rows = this.db
+      .select()
+      .from(taskQueue)
+      .where(type ? and(inArray(taskQueue.state, states), eq(taskQueue.type, type)) : inArray(taskQueue.state, states))
+      .all();
+    return rows;
   }
 
   /**

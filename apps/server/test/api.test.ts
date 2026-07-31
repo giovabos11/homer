@@ -161,7 +161,20 @@ describe('API smoke (contract)', () => {
       .expect(200);
     expect(artifacts.body.resumeUrl).toMatch(/^\/files\//);
 
-    await request(app).post(`/api/applications/${apps.body.applications[0].id}/approve`).expect(200);
+    // Approval is refused while a screening answer still needs the user (FR-9).
+    const appId = apps.body.applications[0].id as number;
+    const pending = Object.entries(artifacts.body.answers as Record<string, unknown>)
+      .filter(([, v]) => typeof v === 'object' && v !== null)
+      .map(([q]) => q);
+    if (pending.length > 0) {
+      await request(app).post(`/api/applications/${appId}/approve`).expect(409);
+      await request(app)
+        .patch(`/api/applications/${appId}/answers`)
+        .send({ answers: Object.fromEntries(pending.map((q) => [q, 'Answered by the candidate'])) })
+        .expect(200);
+    }
+
+    await request(app).post(`/api/applications/${appId}/approve`).expect(200);
     await world.runner.drain();
 
     const after = await request(app).get('/api/applications').expect(200);

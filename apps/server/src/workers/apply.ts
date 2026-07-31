@@ -23,6 +23,7 @@ import { toScheduleEvent } from '../db/serialize';
 import { credentialsMeta, followups, scheduleEvents } from '../db/schema';
 import { readProfile } from '../api/core';
 import { appendOutcomeNote } from '../docs/archive';
+import { normalizeAnswers } from '../docs/screening';
 import { ApplyBlocked, type ApplyCredentialStore, type ApplyProfile } from '../apply/driver';
 import { addAudit, getApplication, getJob, sleep, updateApplication, updateJob, type ApplicationRow } from './helpers';
 import { NeedsHuman, type Worker, type WorkerArgs } from './registry';
@@ -54,7 +55,7 @@ export function vaultCredentialStore(ctx: AppContext): ApplyCredentialStore {
 function buildApplyProfile(ctx: AppContext, app: ApplicationRow): ApplyProfile {
   const p = readProfile(ctx);
   const parts = (p.fullName || 'Candidate').trim().split(/\s+/);
-  const answers = app.answersJson ? (JSON.parse(app.answersJson) as Record<string, string>) : {};
+  const answers = normalizeAnswers(app.answersJson ? (JSON.parse(app.answersJson) as Record<string, unknown>) : {});
   let coverLetterText: string | undefined;
   if (app.archiveDir) {
     const md = path.join(ctx.repoRoot, app.archiveDir, 'cover_letter.md');
@@ -153,6 +154,7 @@ export const applyWorker: Worker = {
         submit: true, // only reached with an approval record (checked above)
         credentials: vaultCredentialStore(ctx),
         runner: ctx.runner,
+        optionModel: settings.modelScore, // cheap tier for "pick one of these options"
         timeoutMs: ctx.config.agent.defaultTimeoutMs,
       });
 
@@ -184,8 +186,14 @@ export const applyWorker: Worker = {
           driver: driverName,
           prompt: err.prompt.slice(0, 2000),
           screenshots: err.screenshots.map((s) => ({ stage: s.stage, path: s.path })),
+          choices: err.choices,
         });
-        throw new NeedsHuman(err.prompt);
+        // The real option sets ride along on the task payload so the dashboard
+        // can render them as one-click choices instead of a wall of text.
+        throw new NeedsHuman(err.prompt, {
+          applicationId: app.id,
+          ...(err.choices.length > 0 ? { choices: err.choices } : {}),
+        });
       }
       if (err instanceof NeedsHuman) throw err;
       await driver.dispose().catch(() => undefined);

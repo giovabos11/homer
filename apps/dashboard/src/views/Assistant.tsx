@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Check, CircleHelp, Eraser, FolderSearch, GitBranch, Lightbulb, Loader2, MessageSquare,
-  MessageSquareWarning, Mic2, MessagesSquare, RefreshCcw, RotateCcw, Send, Sparkles, User, UserRoundPen,
+  MessageSquareWarning, Mic2, MessagesSquare, RefreshCcw, RotateCcw, Send, Sparkles, Trash2, User, UserRoundPen,
 } from 'lucide-react';
 import type { FeedbackKind } from '@shared';
 import { api } from '@/api/client';
@@ -338,6 +338,7 @@ function FeedbackPanel() {
   const [kind, setKind] = useState<FeedbackKind>('idea');
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [applying, setApplying] = useState<number | null>(null);
   const active = KINDS.find((k) => k.kind === kind)!;
 
@@ -347,6 +348,34 @@ function FeedbackPanel() {
         <CardHeader
           title="Feedback & course corrections"
           hint="The agent analyzes what you write and proposes plan changes — applied only with your approval"
+          right={
+            feedback.length > 0 ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={clearing}
+                onClick={async () => {
+                  if (
+                    !window.confirm(
+                      `Deletes ${feedback.length} feedback ${feedback.length === 1 ? 'entry' : 'entries'} and their responses. Applied plan changes stay in effect.`,
+                    )
+                  ) {
+                    return;
+                  }
+                  setClearing(true);
+                  try {
+                    await api.clearFeedback();
+                    await refreshFeedback();
+                  } finally {
+                    setClearing(false);
+                  }
+                }}
+              >
+                {clearing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                Clear history
+              </Button>
+            ) : undefined
+          }
         />
         <div className="px-4 pb-4 space-y-2.5">
           <div className="flex flex-wrap gap-1.5">
@@ -411,10 +440,23 @@ function FeedbackPanel() {
                 animate={{ opacity: 1, y: 0 }}
                 className="rounded-xl border border-line bg-surface overflow-hidden"
               >
-                <div className="px-4 py-2.5 flex items-center gap-2 border-b border-line/70 bg-overlay/40">
+                <div className="group px-4 py-2.5 flex items-center gap-2 border-b border-line/70 bg-overlay/40">
                   <Icon className="h-3.5 w-3.5 text-ink-3" />
                   <span className="text-xs font-semibold text-ink-2">{meta?.label ?? f.kind}</span>
                   <span className="text-[11px] text-ink-3 ml-auto">{fmtRelative(f.createdAt)}</span>
+                  <button
+                    aria-label="Delete this entry"
+                    className="text-ink-3 hover:text-critical opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity cursor-pointer"
+                    onClick={async () => {
+                      try {
+                        await api.deleteFeedback(f.id);
+                      } finally {
+                        await refreshFeedback();
+                      }
+                    }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                 </div>
                 <div className="px-4 py-3 space-y-3">
                   <div className="flex gap-2">

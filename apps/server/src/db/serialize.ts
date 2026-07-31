@@ -7,6 +7,7 @@ import type {
   applications, connections, credentialsMeta, emails, feedback, jobs,
   prepTasks, scheduleEvents, sourceBudgets, taskQueue,
 } from './schema';
+import { normalizeAnswers } from '../docs/screening';
 
 type JobRow = typeof jobs.$inferSelect;
 type ApplicationRow = typeof applications.$inferSelect;
@@ -65,9 +66,14 @@ export function toApplication(row: ApplicationRow, job?: JobRow | null): Applica
     submittedAt: row.submittedAt,
     resumePath: row.resumePath,
     coverLetterPath: row.coverLetterPath,
-    answers: parseJson<Application['answers']>(row.answersJson, null),
+    // Legacy rows carry the plain "FLAGGED_FOR_USER" sentinel; normalize on
+    // read so the dashboard only ever sees structured needs-user markers.
+    answers: row.answersJson
+      ? normalizeAnswers(parseJson<Record<string, unknown>>(row.answersJson, {}))
+      : null,
     archiveDir: row.archiveDir,
     notes: parseJson<Application['notes']>(row.notesJson, []),
+    autoSubmitted: row.autoSubmitted === 1,
   };
 }
 

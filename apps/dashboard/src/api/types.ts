@@ -1,7 +1,8 @@
 import type {
   Application, Connection, ConnectionName, CredentialMeta, EmailRecord, FeedbackEntry,
   FeedbackKind, Job, JobStatus, PrepTask, QueueTask, RemoteType, ScheduleEvent,
-  ScheduleNextRuns, Settings, SkillProgress, SourceBudget, TaskType, UserProfile,
+  ScheduleNextRuns, ScreeningAnswerValue, Settings, SkillProgress, SourceBudget,
+  StandingAnswerKey, StandingAnswers, TaskType, UserProfile,
 } from '@shared';
 
 export interface JobsQuery {
@@ -36,7 +37,18 @@ export interface ApplicationArtifacts {
   resumeUrl: string | null;
   coverLetterUrl: string | null;
   screenshots: string[];
-  answers: Record<string, string> | null;
+  answers: Record<string, ScreeningAnswerValue> | null;
+}
+
+export interface StandingAnswersResponse {
+  answers: StandingAnswers;
+  missingCritical: StandingAnswerKey[];
+}
+
+export interface AnswersPatchResult {
+  application: Application;
+  unresolved: string[];
+  savedAsStanding: StandingAnswerKey[];
 }
 
 export interface GmailProbeResult {
@@ -86,6 +98,16 @@ export interface Api {
   approveApplication(id: number): Promise<{ taskId: number }>;
   rejectApplication(id: number, reason: string): Promise<Application>;
   getApplicationArtifacts(id: number): Promise<ApplicationArtifacts>;
+  patchApplicationAnswers(
+    id: number,
+    body: { answers: Record<string, string>; saveStanding?: string[] },
+  ): Promise<AnswersPatchResult>;
+  // standing answers
+  getStandingAnswers(): Promise<StandingAnswersResponse>;
+  putStandingAnswers(body: Partial<StandingAnswers>): Promise<StandingAnswersResponse>;
+  // discovery sources
+  getSources(): Promise<SourceBudget[]>;
+  setSourceEnabled(source: string, enabled: boolean): Promise<SourceBudget>;
   // search & queue
   search(body: SearchBody): Promise<{ searchId: string }>;
   getQueue(): Promise<QueueSnapshot>;
@@ -93,9 +115,10 @@ export interface Api {
   pauseQueue(): Promise<QueueSnapshot>;
   resumeQueue(): Promise<QueueSnapshot>;
   setQueueRate(discoveryIntervalMinutes: number): Promise<Settings>;
-  resolveHuman(taskId: number): Promise<QueueTask>;
+  resolveHuman(taskId: number, answers?: Record<string, string>): Promise<QueueTask>;
   retryTask(taskId: number): Promise<QueueTask>;
   cancelTask(taskId: number): Promise<QueueTask>;
+  cancelAll(scope: 'running' | 'pending' | 'all', type?: TaskType): Promise<{ cancelled: number }>;
   retryFailed(type?: TaskType): Promise<{ requeued: number }>;
   // emails
   getEmails(params?: { direction?: string; classification?: string; limit?: number; offset?: number }): Promise<{ total: number; emails: EmailRecord[] }>;
@@ -118,6 +141,8 @@ export interface Api {
   // feedback / ask / settings / reset
   postFeedback(kind: FeedbackKind, text: string): Promise<FeedbackEntry>;
   getFeedback(): Promise<FeedbackEntry[]>;
+  deleteFeedback(id: number): Promise<{ ok: boolean }>;
+  clearFeedback(kind?: FeedbackKind): Promise<{ deleted: number }>;
   applyPlanChange(id: number): Promise<FeedbackEntry>;
   ask(prompt: string): Promise<{ requestId: string }>;
   askClear(): Promise<{ ok: boolean }>;

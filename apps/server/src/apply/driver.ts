@@ -2,7 +2,9 @@
 // PlaywrightApplyDriver (default, headed persistent Chromium profile) and
 // ChromeApplyDriver (Claude in Chrome — interactive only, always parks).
 import crypto from 'node:crypto';
+import type { ScreeningAnswerValue } from '@shared/types';
 import type { AgentRunner } from '../agent/types';
+import type { FieldOption } from './option-match';
 
 export type AtsKind = 'greenhouse' | 'lever' | 'ashby' | 'generic';
 
@@ -24,8 +26,22 @@ export interface ApplyProfile {
   coverLetterPath: string | null;
   /** Drafted cover-letter text for "paste your cover letter" textareas. */
   coverLetterText?: string;
-  /** Pre-drafted screening answers (tailor phase + 08-application-forms defaults). */
-  answers: Record<string, string>;
+  /**
+   * Pre-drafted screening answers: standing answers → profile rules →
+   * structured needs-user markers (never invented values).
+   */
+  answers: Record<string, ScreeningAnswerValue>;
+}
+
+/**
+ * A form question the driver refused to guess, WITH the field's real options
+ * so the dashboard can offer them as one-click choices (FR-25).
+ */
+export interface BlockedChoice {
+  question: string;
+  options: FieldOption[];
+  /** The resolved answer that could not be mapped onto those options. */
+  answer?: string;
 }
 
 export interface ApplyScreenshot {
@@ -57,6 +73,8 @@ export interface ApplyRunArgs {
   credentials: ApplyCredentialStore;
   /** Agent used to draft grounded answers for unknown free-text questions. */
   runner: AgentRunner;
+  /** Model alias for the cheap option-matching calls (settings.modelScore tier). */
+  optionModel?: string;
   timeoutMs?: number;
 }
 
@@ -75,6 +93,8 @@ export class ApplyBlocked extends Error {
   constructor(
     public readonly prompt: string,
     public readonly screenshots: ApplyScreenshot[] = [],
+    /** Questions whose real option list the dashboard can render as buttons. */
+    public readonly choices: BlockedChoice[] = [],
   ) {
     super(prompt);
   }

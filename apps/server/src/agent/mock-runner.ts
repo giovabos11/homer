@@ -1,5 +1,6 @@
 // MockRunner — deterministic AgentRunner for tests and SIMULATE demos.
 import crypto from 'node:crypto';
+import { AgentAborted } from './claude-code-runner';
 import { extractStructured, type AgentRunner, type AgentRunOptions, type AgentRunResult } from './types';
 
 export type MockScript = (opts: AgentRunOptions) => { text: string; structured?: unknown } | string;
@@ -14,6 +15,7 @@ export class MockRunner implements AgentRunner {
 
   async run(opts: AgentRunOptions): Promise<AgentRunResult> {
     this.calls.push(opts);
+    if (opts.signal?.aborted) throw new AgentAborted();
     const sessionId = opts.sessionId ?? crypto.randomUUID();
     opts.onEvent?.({ type: 'system', subtype: 'init', session_id: sessionId });
 
@@ -31,6 +33,7 @@ export class MockRunner implements AgentRunner {
         session_id: sessionId,
       });
       if (this.delayMs > 0) await new Promise((r) => setTimeout(r, this.delayMs));
+      if (opts.signal?.aborted) throw new AgentAborted();
     }
     opts.onEvent?.({ type: 'result', subtype: 'success', result: text, session_id: sessionId });
     return { text, sessionId, structured };

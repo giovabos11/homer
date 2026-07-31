@@ -4,7 +4,7 @@ import {
   type DragEndEvent, type DragStartEvent,
 } from '@dnd-kit/core';
 import { AnimatePresence, motion } from 'motion/react';
-import { Clock, Eye, GripVertical, Inbox } from 'lucide-react';
+import { Clock, Eye, GripVertical, Inbox, Zap } from 'lucide-react';
 import type { Application, Job, JobStatus } from '@shared';
 import { api } from '@/api/client';
 import { useStore } from '@/store/useStore';
@@ -13,6 +13,7 @@ import { salaryLabel, STATUS_LABEL } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Tip } from '@/components/ui/controls';
 import { FitRing, FitScoreTip } from '@/components/common/rings';
 import { LegitBadge, SourceIcon } from '@/components/common/chips';
 import { useJobDrawer } from '@/components/common/JobDrawer';
@@ -81,6 +82,13 @@ function KanbanCard({ job, app, dragging, queued }: { job: Job; app?: Applicatio
           <Badge variant="violet">
             <Clock className="h-3 w-3" /> Queued for tailoring
           </Badge>
+        )}
+        {app?.autoSubmitted && (
+          <Tip label="Every screening question resolved from your profile and standing answers, so Homer submitted it without a review card. Full audit trail on the card.">
+            <Badge variant="violet">
+              <Zap className="h-3 w-3" /> Submitted automatically
+            </Badge>
+          </Tip>
         )}
         {job.status === 'hired' && <Badge variant="good">Hired</Badge>}
         <span className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity text-ink-3">

@@ -1,5 +1,5 @@
 // Humanized queue-task labels ("Scoring — Backend Engineer @ Parallel Works")
-// shared by the Mission Control current-task strip and the Search queue panel.
+// shared by the Home current-task strip and the Search queue panel.
 import type { Application, Job, QueueTask, TaskType } from '@shared';
 import { sourceLabel } from '@/components/common/chips';
 import { titleCase } from '@/lib/format';

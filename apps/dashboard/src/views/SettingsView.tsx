@@ -13,7 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Checkbox, Slider } from '@/components/ui/controls';
+import { Checkbox, Slider, Switch } from '@/components/ui/controls';
 import { sourceLabel } from '@/components/common/chips';
 
 const GATE_OPTIONS: { value: GateMode; label: string; icon: typeof Eye; desc: string }[] = [
@@ -171,6 +171,29 @@ function GateCard() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        <div className="rounded-lg border border-line bg-raised/50 p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[13px] font-medium text-ink">Submit on its own when nothing is unknown</p>
+              <p className="text-[11px] text-ink-3 mt-0.5 leading-relaxed max-w-xl">
+                Applications submit on their own only when every question resolved from your profile and standing
+                answers; anything unknown still waits for you. LinkedIn always waits.
+              </p>
+            </div>
+            <Switch
+              checked={settings.autoSubmitWhenResolved}
+              onCheckedChange={(v) => void patch({ autoSubmitWhenResolved: v })}
+              aria-label="Submit automatically when every answer is resolved"
+            />
+          </div>
+          {settings.autoSubmitWhenResolved && (
+            <p className="text-[11px] text-ink-3 mt-2 pt-2 border-t border-line/70">
+              Fill your standing answers in <span className="text-ink-2">Profile → Application answers</span> so more
+              applications can clear this bar.
+            </p>
+          )}
+        </div>
 
         <div>
           <p className="text-xs font-semibold text-ink uppercase tracking-wide mb-2">Per-source overrides</p>

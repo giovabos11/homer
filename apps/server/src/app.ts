@@ -6,6 +6,8 @@ import type { AppContext } from './context';
 import { coreRoutes } from './api/core';
 import { jobRoutes } from './api/jobs';
 import { applicationRoutes } from './api/applications';
+import { standingAnswerRoutes } from './api/standing-answers';
+import { sourceRoutes } from './api/sources';
 import { queueRoutes } from './api/queue';
 import { emailRoutes } from './api/emails';
 import { scheduleRoutes } from './api/schedule';
@@ -29,6 +31,8 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api', coreRoutes(ctx));
   app.use('/api', jobRoutes(ctx));
   app.use('/api', applicationRoutes(ctx));
+  app.use('/api', standingAnswerRoutes(ctx));
+  app.use('/api', sourceRoutes(ctx));
   app.use('/api', queueRoutes(ctx));
   app.use('/api', emailRoutes(ctx));
   app.use('/api', scheduleRoutes(ctx));

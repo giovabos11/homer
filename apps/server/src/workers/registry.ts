@@ -12,8 +12,20 @@ export class PauseRequested extends Error {
 }
 
 export class NeedsHuman extends Error {
-  constructor(public readonly prompt: string) {
+  constructor(
+    public readonly prompt: string,
+    /** Merged into the task payload so the dashboard can render rich controls
+     *  (e.g. the real select/radio options behind a parked question). */
+    public readonly payload?: Record<string, unknown>,
+  ) {
     super(`Needs human: ${prompt}`);
+  }
+}
+
+/** Thrown (or surfaced) when the user cancelled a running task. */
+export class TaskCancelled extends Error {
+  constructor(public readonly detail = 'Cancelled by user') {
+    super(detail);
   }
 }
 
@@ -29,6 +41,8 @@ export interface WorkerArgs {
   /** Poll between units of work; when true, save your cursor and throw PauseRequested. */
   paused(): boolean;
   saveCursor(cursor: Record<string, unknown> | null): void;
+  /** Aborted when the user cancels this task. ctx.runner already honors it. */
+  signal?: AbortSignal;
 }
 
 export interface Worker {

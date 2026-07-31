@@ -51,6 +51,75 @@ export interface Job {
   opportunityScore?: number | null;
 }
 
+/**
+ * A screening answer the system refuses to invent. Replaces the legacy
+ * "FLAGGED_FOR_USER" sentinel string: the UI renders it as an editable
+ * "Needs your answer" field instead of leaking a magic token into the PDF.
+ */
+export interface NeedsUserAnswer {
+  status: 'needs_user';
+  /** The question as the form (or the defaults table) phrased it. */
+  question: string;
+  /** Why it is unanswerable and what would resolve it. */
+  hint?: string;
+  /** A non-binding suggestion the user may accept; never auto-used. */
+  suggestion?: string;
+  /** Standing-answer key that permanently resolves this question, when one exists. */
+  standingKey?: StandingAnswerKey;
+}
+
+/** Stored screening answer: a plain string, or a structured needs-user marker. */
+export type ScreeningAnswerValue = string | NeedsUserAnswer;
+
+/** Legacy sentinel kept for reading rows written before structured markers. */
+export const LEGACY_FLAGGED_ANSWER = 'FLAGGED_FOR_USER';
+
+export function isNeedsUserAnswer(v: ScreeningAnswerValue | undefined | null): v is NeedsUserAnswer {
+  return typeof v === 'object' && v !== null && (v as NeedsUserAnswer).status === 'needs_user';
+}
+
+export type StandingAnswerKey =
+  | 'salaryExpectation'
+  | 'salaryMinAcceptable'
+  | 'earliestStartDate'
+  | 'noticePeriod'
+  | 'citizenshipStatus'
+  | 'requiresSponsorship'
+  | 'securityClearance'
+  | 'eeoRace'
+  | 'eeoGender'
+  | 'eeoVeteran'
+  | 'eeoDisability'
+  | 'willingToRelocate'
+  | 'preferredPronouns'
+  | 'referencesAvailable';
+
+/**
+ * Answers the user gives once and Homer reuses on every application (FR-9).
+ * Everything is user-authored: nothing here is ever derived or invented by an
+ * agent. Empty string = unset, which keeps the matching question flagged.
+ * Stored as normal data — a `db`-scope reset wipes it.
+ */
+export interface StandingAnswers {
+  salaryExpectation: string;
+  /** Optional numeric floor; null = not disclosed. */
+  salaryMinAcceptable: number | null;
+  earliestStartDate: string;
+  noticePeriod: string;
+  citizenshipStatus: string;
+  /** 'yes' | 'no' | '' */
+  requiresSponsorship: string;
+  securityClearance: string;
+  eeoRace: string;
+  eeoGender: string;
+  eeoVeteran: string;
+  eeoDisability: string;
+  /** 'yes' | 'no' | free text | '' */
+  willingToRelocate: string;
+  preferredPronouns: string;
+  referencesAvailable: string;
+}
+
 export interface Application {
   id: number;
   jobId: number;
@@ -61,9 +130,11 @@ export interface Application {
   submittedAt: string | null;
   resumePath: string | null;
   coverLetterPath: string | null;
-  answers: Record<string, string> | null;
+  answers: Record<string, ScreeningAnswerValue> | null;
   archiveDir: string | null;
   notes: { date: string; text: string }[];
+  /** True when the submit gate approved this without a human click (FR-9/D1). */
+  autoSubmitted: boolean;
 }
 
 export interface QueueTask {
@@ -90,7 +161,12 @@ export interface SourceBudget {
   refillPerHour: number;
   lastRun: string | null;
   nextRun: string | null;
+  /** User-controlled: whether scheduled discovery may use this source. */
   enabled: boolean;
+  /** Source needs an API key before it can run at all (adzuna, usajobs). */
+  keyGated?: boolean;
+  /** Set when the source cannot run despite `enabled` (missing key, skill not installed). */
+  blockedReason?: string | null;
 }
 
 export interface EmailRecord {
@@ -200,6 +276,13 @@ export interface Settings {
   /** Max agent-bound tasks the queue runner keeps in flight at once (1-4).
    *  apply and discover are always serialized outside this pool. */
   queueConcurrency: number;                   // default 2
+  /**
+   * Layered on the submit gate (D1): when every screening answer resolved from
+   * the profile + standing answers, fit/legitimacy passed and the ATS check
+   * passed, submit without a review card. Anything unresolved still waits.
+   * LinkedIn is always review-gated regardless. Default true.
+   */
+  autoSubmitWhenResolved: boolean;
 }
 
 /** Next scheduled sweep times (ISO) — part of the queue snapshot. */

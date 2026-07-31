@@ -1,6 +1,6 @@
 import type {
   Application, Connection, CredentialMeta, EmailRecord, FeedbackEntry, Job,
-  PrepTask, QueueTask, ScheduleEvent, Settings, SkillProgress, SourceBudget, UserProfile,
+  PrepTask, QueueTask, ScheduleEvent, Settings, SkillProgress, SourceBudget, StandingAnswers, UserProfile,
 } from '@shared';
 
 // ---------------------------------------------------------------------------
@@ -169,10 +169,16 @@ function app(company: string, o: Partial<Application> = {}): Application {
       'Are you authorized to work in the US?': 'Yes',
       'Will you now or in the future require sponsorship?': 'No',
       'Are you willing to relocate?': 'Yes, anywhere in the US',
-      'Desired salary': 'Flagged for Giovanni — not auto-answered',
+      'Salary expectations': {
+        status: 'needs_user',
+        question: 'Salary expectations',
+        hint: 'Homer never invents a number. Set a standing answer (e.g. "Open, targeting market rate for the role").',
+        standingKey: 'salaryExpectation',
+      },
     },
     archiveDir: `documents/applications/${company.toLowerCase().replace(/\W+/g, '_')}`,
     notes: [],
+    autoSubmitted: false,
     ...o,
   };
 }
@@ -270,8 +276,8 @@ export const BUDGETS: SourceBudget[] = [
   { source: 'hn_hiring', health: 'ok', remainingTokens: 20, refillPerHour: 4, lastRun: daysAgo(0, 7), nextRun: new Date(NOW + 7200000).toISOString(), enabled: true },
   { source: 'freehire', health: 'ok', remainingTokens: 55, refillPerHour: 30, lastRun: new Date(NOW - 900000).toISOString(), nextRun: new Date(NOW + 2700000).toISOString(), enabled: true },
   { source: 'linkedin', health: 'down', remainingTokens: 0, refillPerHour: 2, lastRun: daysAgo(1, 9), nextRun: inDays(1, 8), enabled: true },
-  { source: 'adzuna', health: 'ok', remainingTokens: 0, refillPerHour: 0, lastRun: null, nextRun: null, enabled: false },
-  { source: 'usajobs', health: 'ok', remainingTokens: 0, refillPerHour: 0, lastRun: null, nextRun: null, enabled: false },
+  { source: 'adzuna', health: 'ok', remainingTokens: 0, refillPerHour: 0, lastRun: null, nextRun: null, enabled: false, keyGated: true, blockedReason: 'Needs an API key before it can run' },
+  { source: 'usajobs', health: 'ok', remainingTokens: 0, refillPerHour: 0, lastRun: null, nextRun: null, enabled: false, keyGated: true, blockedReason: 'Needs an API key before it can run' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -456,6 +462,24 @@ export const SETTINGS: Settings = {
   autoAdvance: 'threshold',
   autoAdvanceThreshold: 70,
   queueConcurrency: 2,
+  autoSubmitWhenResolved: true,
+};
+
+export const STANDING_ANSWERS: StandingAnswers = {
+  salaryExpectation: '',
+  salaryMinAcceptable: null,
+  earliestStartDate: '',
+  noticePeriod: '',
+  citizenshipStatus: '',
+  requiresSponsorship: '',
+  securityClearance: '',
+  eeoRace: 'Prefer not to say',
+  eeoGender: 'Prefer not to say',
+  eeoVeteran: 'Prefer not to say',
+  eeoDisability: 'Prefer not to say',
+  willingToRelocate: '',
+  preferredPronouns: '',
+  referencesAvailable: '',
 };
 
 export const FEEDBACK: FeedbackEntry[] = [

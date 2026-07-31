@@ -22,7 +22,8 @@
     "modelFeedback": "sonnet",
     "autoAdvance": "threshold",
     "autoAdvanceThreshold": 70,
-    "queueConcurrency": 2
+    "queueConcurrency": 2,
+    "autoSubmitWhenResolved": true
   },
   "queue": {
     "maxAttempts": 5,

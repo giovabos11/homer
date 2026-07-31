@@ -1,4 +1,4 @@
-// First-run onboarding (Mission Control): shown while GET /api/profile reports
+// First-run onboarding (Home): shown while GET /api/profile reports
 // profileReady:false — i.e. CLAUDE.md / the candidate-profile skill still hold
 // their "[PLACEHOLDER" / "[YOUR_" tokens. Three steps walk the accent→violet
 // journey the XP bar uses; steps flip to a done-check as the profile fills in,

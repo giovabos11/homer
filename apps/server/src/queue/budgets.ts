@@ -22,10 +22,14 @@ export class BudgetManager {
     private clock: Clock = () => Date.now(),
   ) {}
 
-  /** Ensure a budget row exists for a source (called when skills are discovered). */
-  ensure(source: string): void {
+  /**
+   * Ensure a budget row exists for a source (called when skills are discovered).
+   * Returns true when the row was CREATED — the only moment the SKILL.md
+   * frontmatter is allowed to seed `enabled`.
+   */
+  ensure(source: string): boolean {
     const existing = this.db.select().from(sourceBudgets).where(eq(sourceBudgets.source, source)).get();
-    if (existing) return;
+    if (existing) return false;
     const spec = this.perSource[source] ?? this.defaults;
     this.db
       .insert(sourceBudgets)
@@ -39,6 +43,13 @@ export class BudgetManager {
         enabled: 1,
       })
       .run();
+    return true;
+  }
+
+  /** Runtime authority for scheduled discovery. Unknown source → enabled. */
+  isEnabled(source: string): boolean {
+    const row = this.db.select().from(sourceBudgets).where(eq(sourceBudgets.source, source)).get();
+    return row ? row.enabled === 1 : true;
   }
 
   /** Refill by elapsed time, then try to spend `cost` tokens. */

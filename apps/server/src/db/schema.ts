@@ -50,11 +50,19 @@ export const applications = sqliteTable(
     auditJson: text('audit_json').notNull().default('[]'),
     archiveDir: text('archive_dir'),
     notesJson: text('notes_json').notNull().default('[]'),
+    autoSubmitted: integer('auto_submitted').notNull().default(0),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull(),
   },
   (t) => [index('idx_applications_job').on(t.jobId)],
 );
+
+/** "Answer once, reuse forever" screening answers (FR-9). User-authored only. */
+export const standingAnswers = sqliteTable('standing_answers', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
 
 export const emails = sqliteTable('emails', {
   id: integer('id').primaryKey({ autoIncrement: true }),

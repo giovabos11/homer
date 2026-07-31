@@ -9,9 +9,11 @@ import { loadConfig, isSimulate, type ServerConfig } from './config';
 import { openDb, type Db, type DbHandle } from './db/client';
 import { EventBus } from './events/bus';
 import { BudgetManager, type Clock } from './queue/budgets';
+import { CancellationRegistry } from './queue/cancellation';
 import { TaskQueue } from './queue/queue';
 import { Scheduler } from './queue/scheduler';
 import { SettingsStore } from './settings';
+import { StandingAnswerStore } from './docs/standing';
 import { discoverSkills } from './sources/skills';
 import { ConnectionsMonitor, type Probes } from './connections/monitor';
 import { createVault, type Vault } from './vault';
@@ -30,8 +32,12 @@ export interface AppContext {
   db: Db;
   bus: EventBus;
   settings: SettingsStore;
+  /** "Answer once, reuse forever" screening answers (FR-9). */
+  standing: StandingAnswerStore;
   budgets: BudgetManager;
   queue: TaskQueue;
+  /** Abort controllers for in-flight tasks — how cancel reaches a running CLI. */
+  cancellations: CancellationRegistry;
   scheduler: Scheduler;
   vault: Vault;
   runner: AgentRunner;
@@ -80,15 +86,16 @@ export function createContext(options: ContextOptions = {}): AppContext {
   const settings = new SettingsStore(handle.db, config.settings);
   settings.seed();
 
+  const standing = new StandingAnswerStore(handle.db);
+
   const clock = options.clock ?? (() => Date.now());
   const budgets = new BudgetManager(handle.db, config.budgets.default, config.budgets.perSource, clock);
-  // Seed budget rows for every installed portal skill, syncing the enabled
-  // flag from the skill frontmatter so disabled portals (Danish demo set,
-  // key-gated sources without keys) don't show as active sources in the
-  // dashboard queue panel.
+  // Seed a budget row per installed portal skill. The SKILL.md `enabled:`
+  // frontmatter only SEEDS the flag the first time a source is seen; after that
+  // source_budgets.enabled is the runtime authority so a dashboard toggle is
+  // never silently reverted at the next boot (PRD §11).
   for (const skill of discoverSkills(root)) {
-    budgets.ensure(skill.source);
-    budgets.setEnabled(skill.source, skill.enabled);
+    if (budgets.ensure(skill.source)) budgets.setEnabled(skill.source, skill.enabled);
   }
 
   const queue = new TaskQueue(handle, settings, config.queue, clock);
@@ -116,8 +123,10 @@ export function createContext(options: ContextOptions = {}): AppContext {
     db: handle.db,
     bus,
     settings,
+    standing,
     budgets,
     queue,
+    cancellations: new CancellationRegistry(),
     scheduler,
     vault,
     runner,

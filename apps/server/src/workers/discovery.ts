@@ -8,7 +8,8 @@ import { toJob } from '../db/serialize';
 import { hitToJobInput, upsertJob } from '../sources/dedupe';
 import { fetchJobDetailFromPortal } from '../sources/enrich';
 import { runPortalSearch, PortalCliError } from '../sources/portal-cli';
-import { enabledSkills, resolveBun, type PortalSkill } from '../sources/skills';
+import { discoverSkills, resolveBun, type PortalSkill } from '../sources/skills';
+import { activeSources } from '../api/sources';
 import { PauseRequested, type Worker, type WorkerArgs } from './registry';
 
 interface DiscoverPayload {
@@ -39,8 +40,19 @@ export const discoveryWorker: Worker = {
   async run({ ctx, task, paused, saveCursor }: WorkerArgs): Promise<void> {
     const payload = JSON.parse(task.payloadJson) as DiscoverPayload;
     const cursor = (task.cursorJson ? JSON.parse(task.cursorJson) : { sourceIndex: 0, page: 1 }) as DiscoverCursor;
+    const active = activeSources(ctx);
     const query = payload.keywords?.trim() || ctx.config.discovery.defaultQuery;
-    const skills = enabledSkills(ctx.repoRoot, payload.sources ?? ctx.config.discovery.skillAllowlist);
+    // A manual search names its own sources and wins. A SCHEDULED sweep uses
+    // the dashboard toggles (source_budgets.enabled, key-gating included) —
+    // never the SKILL.md frontmatter, which only ever seeds those toggles.
+    const allSkills = discoverSkills(ctx.repoRoot);
+    const skills = payload.sources
+      ? allSkills.filter((s) => payload.sources!.includes(s.source) || payload.sources!.includes(s.name))
+      : allSkills.filter(
+          (s) =>
+            active.includes(s.source) &&
+            (ctx.config.discovery.skillAllowlist == null || ctx.config.discovery.skillAllowlist.includes(s.source)),
+        );
 
     if (ctx.simulate) {
       simulateDiscovery(ctx, task.id, skills, query);

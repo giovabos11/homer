@@ -1,8 +1,12 @@
 import type {
   Application, Connection, ConnectionName, CredentialMeta, EmailRecord, FeedbackEntry,
-  FeedbackKind, Job, JobStatus, PrepTask, QueueTask, ScheduleEvent, Settings, SkillProgress, UserProfile,
+  FeedbackKind, Job, JobStatus, PrepTask, QueueTask, ScheduleEvent, Settings, SkillProgress,
+  SourceBudget, StandingAnswers, TaskType, UserProfile,
 } from '@shared';
-import type { Api, ApplicationArtifacts, GmailProbeResult, JobsQuery, QueueSnapshot, SearchBody, SetupStatus } from './types';
+import type {
+  AnswersPatchResult, Api, ApplicationArtifacts, GmailProbeResult, JobsQuery, QueueSnapshot,
+  SearchBody, SetupStatus, StandingAnswersResponse,
+} from './types';
 import { mockApi } from './mock/mockApi';
 
 export const IS_MOCK = import.meta.env.VITE_MOCK === '1';
@@ -102,6 +106,14 @@ const realApi: Api = {
   rejectApplication: (id: number, reason: string) =>
     post<Application>(`/api/applications/${id}/reject`, { reason }),
   getApplicationArtifacts: (id: number) => get<ApplicationArtifacts>(`/api/applications/${id}/artifacts`),
+  patchApplicationAnswers: (id: number, body) => patch<AnswersPatchResult>(`/api/applications/${id}/answers`, body),
+
+  getStandingAnswers: () => get<StandingAnswersResponse>('/api/standing-answers'),
+  putStandingAnswers: (body: Partial<StandingAnswers>) => put<StandingAnswersResponse>('/api/standing-answers', body),
+
+  getSources: () => get<SourceBudget[]>('/api/sources'),
+  setSourceEnabled: (source: string, enabled: boolean) =>
+    patch<SourceBudget>(`/api/sources/${encodeURIComponent(source)}`, { enabled }),
 
   search: (body: SearchBody) => post<{ searchId: string }>('/api/search', body),
   getQueue: () => get<QueueSnapshot>('/api/queue'),
@@ -110,9 +122,12 @@ const realApi: Api = {
   resumeQueue: () => post<QueueSnapshot>('/api/queue/resume'),
   setQueueRate: (discoveryIntervalMinutes: number) =>
     post<Settings>('/api/queue/rate', { discoveryIntervalMinutes }),
-  resolveHuman: (taskId: number) => post<QueueTask>(`/api/queue/tasks/${taskId}/resolve-human`),
+  resolveHuman: (taskId: number, answers?: Record<string, string>) =>
+    post<QueueTask>(`/api/queue/tasks/${taskId}/resolve-human`, answers ? { answers } : {}),
   retryTask: (taskId: number) => post<QueueTask>(`/api/queue/tasks/${taskId}/retry`),
   cancelTask: (taskId: number) => post<QueueTask>(`/api/queue/tasks/${taskId}/cancel`),
+  cancelAll: (scope: 'running' | 'pending' | 'all', type?: TaskType) =>
+    post<{ cancelled: number }>('/api/queue/cancel-all', type ? { scope, type } : { scope }),
   retryFailed: (type) => post<{ requeued: number }>('/api/queue/retry-failed', type ? { type } : {}),
 
   getEmails: (params) =>
@@ -143,6 +158,8 @@ const realApi: Api = {
 
   postFeedback: (kind: FeedbackKind, text: string) => post<FeedbackEntry>('/api/feedback', { kind, text }),
   getFeedback: () => get<FeedbackEntry[]>('/api/feedback'),
+  deleteFeedback: (id: number) => del<{ ok: boolean }>(`/api/feedback/${id}`),
+  clearFeedback: (kind?: FeedbackKind) => del<{ deleted: number }>(`/api/feedback${qs({ kind })}`),
   applyPlanChange: (id: number) => post<FeedbackEntry>(`/api/feedback/${id}/apply-plan`),
   ask: (prompt: string) => post<{ requestId: string }>('/api/ask', { prompt }),
   askClear: () => post<{ ok: boolean }>('/api/ask/clear'),

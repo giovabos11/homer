@@ -43,7 +43,9 @@ function useTheme() {
 
 function ProfileChip({ collapsed }: { collapsed: boolean }) {
   const profile = useStore((s) => s.profile);
-  const [open, setOpen] = useState(false);
+  // Shared so a nudge on Home can open the same modal.
+  const open = useStore((s) => s.profileModalOpen);
+  const setOpen = useStore((s) => s.setProfileModalOpen);
   const ready = profile?.profileReady ?? false;
   const name = ready && profile?.fullName ? profile.fullName : 'Set up your profile';
   // Email extraction can miss (contact formats vary) — never show the setup nag once ready.
@@ -205,7 +207,7 @@ function Sidebar() {
   };
 
   const NAV: NavEntry[] = [
-    { to: '/', icon: LayoutDashboard, label: 'Mission Control', badge: readyCount, exact: true },
+    { to: '/', icon: LayoutDashboard, label: 'Home', badge: readyCount, exact: true },
     { to: '/opportunities', icon: Gem, label: 'Opportunities', badge: 0 },
     { to: '/search', icon: SearchIcon, label: 'Search', badge: humanCount, badgeTone: 'warn' as const },
     { to: '/inbox', icon: InboxIcon, label: 'Inbox', badge: outboxCount },
@@ -339,7 +341,7 @@ function Shell() {
           <img src="/lyre-icon.png" alt="Homer" className="h-8 w-8" />
         </div>
         <p className="text-sm text-ink-3 inline-flex items-center gap-2">
-          <Loader2 className="h-4 w-4 animate-spin" /> Connecting to mission control…
+          <Loader2 className="h-4 w-4 animate-spin" /> Connecting to the Homer server…
         </p>
       </div>
     );

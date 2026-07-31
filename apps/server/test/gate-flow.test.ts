@@ -106,7 +106,25 @@ describe('discovered → screened → tailoring → ready_for_review → approve
     expect(appRow.status).toBe('ready_for_review');
     expect(appRow.approvedAt).toBeNull();
 
-    // 4) User approves at the gate → apply worker drives the fixture form.
+    // 4) The user answers what only they can answer (salary / start date /
+    // citizenship stay flagged until a standing answer exists), then approves.
+    await request(app).post(`/api/applications/${appRow.id}/approve`).expect(409);
+    world.ctx.standing.patch({
+      salaryExpectation: 'Open, targeting market rate for the role',
+      earliestStartDate: 'Two weeks from an offer',
+      citizenshipStatus: 'Authorized to work in the US for any employer',
+      securityClearance: 'None',
+    });
+    await request(app)
+      .patch(`/api/applications/${appRow.id}/answers`)
+      .send({
+        answers: {
+          'Salary expectations': 'Open, targeting market rate for the role',
+          'Earliest start date': 'Two weeks from an offer',
+          'Security clearance / citizenship questions': 'No clearance; authorized for any US employer',
+        },
+      })
+      .expect(200);
     await request(app).post(`/api/applications/${appRow.id}/approve`).expect(200);
     await world.runner.drain();
 
