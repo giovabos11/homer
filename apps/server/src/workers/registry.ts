@@ -29,6 +29,18 @@ export class TaskCancelled extends Error {
   }
 }
 
+/**
+ * A failure that must NOT be retried, because running again cannot change the
+ * answer: the posting is gone, or the link is not an application form. The
+ * runner marks it failed immediately instead of backing off and trying again,
+ * so a dead posting stops burning apply slots.
+ */
+export class TerminalFailure extends Error {
+  constructor(public readonly detail: string) {
+    super(detail);
+  }
+}
+
 export class WaitingSession extends Error {
   constructor(public readonly detail: string) {
     super(`Waiting for session: ${detail}`);

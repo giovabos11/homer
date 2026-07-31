@@ -203,6 +203,7 @@ function makeSearchJob(pool: (typeof SEARCH_POOL)[number], body: SearchBody): Jo
     legitVerdict: 'unchecked',
     legitReasons: [],
     managed: 'auto',
+    applyChannel: 'ats_form',
   };
 }
 
@@ -444,6 +445,7 @@ export const mockApi: Api = {
       legitVerdict: 'unchecked',
       legitReasons: [],
       managed: 'manual',
+      applyChannel: 'ats_form',
     };
     S.jobs.unshift(job);
     mockBus.emit({ type: 'job.discovered', job: structuredClone(job) });
@@ -483,6 +485,7 @@ export const mockApi: Api = {
       legitVerdict: 'unchecked',
       legitReasons: [],
       managed: 'auto',
+      applyChannel: 'ats_form',
     };
     S.jobs.unshift(job);
     mockBus.emit({ type: 'job.discovered', job: structuredClone(job) });

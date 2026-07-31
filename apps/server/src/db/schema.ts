@@ -26,12 +26,15 @@ export const jobs = sqliteTable(
     legitVerdict: text('legit_verdict').notNull().default('unchecked'),
     legitReasonsJson: text('legit_reasons_json').notNull().default('[]'),
     managed: text('managed').notNull().default('auto'),
+    /** ApplyChannel — ats_form | aggregator_redirect | email | unknown (0006). */
+    applyChannel: text('apply_channel').notNull().default('unknown'),
     dedupeKey: text('dedupe_key').notNull(),
   },
   (t) => [
     uniqueIndex('jobs_dedupe_key_unique').on(t.dedupeKey),
     index('idx_jobs_status').on(t.status),
     index('idx_jobs_source').on(t.source),
+    index('idx_jobs_apply_channel').on(t.applyChannel),
   ],
 );
 

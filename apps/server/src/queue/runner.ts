@@ -10,7 +10,7 @@ import type { TaskType } from '@shared/types';
 import type { AppContext } from '../context';
 import type { AgentRunner } from '../agent/types';
 import { jobs } from '../db/schema';
-import { PauseRequested, NeedsHuman, WaitingSession, getWorker } from '../workers/registry';
+import { PauseRequested, NeedsHuman, TerminalFailure, WaitingSession, getWorker } from '../workers/registry';
 import { toQueueTask } from '../db/serialize';
 import type { TaskRow } from './queue';
 
@@ -142,6 +142,9 @@ export class QueueRunner {
           this.ctx.bus.emit({ type: 'task.needs_human', task: toQueueTask(row) });
         } else if (err instanceof WaitingSession) {
           this.ctx.queue.waitingSession(task.id, err.detail);
+        } else if (err instanceof TerminalFailure) {
+          // Retrying a dead posting just re-reads the same 404. Fail once.
+          this.ctx.queue.failNow(task.id, err.detail);
         } else {
           const message = err instanceof Error ? err.message : String(err);
           this.ctx.queue.fail(task.id, message);

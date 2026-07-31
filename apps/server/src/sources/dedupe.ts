@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm';
 import type { RemoteType } from '@shared/types';
 import type { Db } from '../db/client';
 import { jobs } from '../db/schema';
+import { classifyApplyChannel } from '../apply/channel';
 import type { PortalHit } from './portal-cli';
 
 type JobRow = typeof jobs.$inferSelect;
@@ -118,6 +119,13 @@ export function upsertJob(db: Db, input: JobInput, now: Date = new Date()): Upse
         firstSeen: now.toISOString(),
         status: input.status ?? 'discovered',
         managed: input.managed ?? 'auto',
+        // Classified at intake so the board never shows an unclassified card
+        // (the boot backfill only exists for rows written before this column).
+        applyChannel: classifyApplyChannel({
+          canonicalUrl: input.canonicalUrl,
+          source: input.source,
+          descriptionMd: input.descriptionMd ?? null,
+        }),
         dedupeKey: key,
       })
       .returning()
@@ -130,21 +138,30 @@ export function upsertJob(db: Db, input: JobInput, now: Date = new Date()): Upse
   const existingIsAts = ATS_SOURCES.has(existing.source);
   const preferNew = newIsAts && !existingIsAts;
 
+  const nextSource = preferNew ? input.source : existing.source;
+  const nextUrl = preferNew && input.canonicalUrl ? input.canonicalUrl : existing.canonicalUrl || input.canonicalUrl;
+  const nextDescription =
+    preferNew && input.descriptionMd ? input.descriptionMd : (existing.descriptionMd ?? input.descriptionMd ?? null);
+
   const updated = db
     .update(jobs)
     .set({
-      source: preferNew ? input.source : existing.source,
+      source: nextSource,
       externalId: preferNew ? input.externalId : (existing.externalId ?? input.externalId),
-      canonicalUrl: preferNew && input.canonicalUrl ? input.canonicalUrl : existing.canonicalUrl || input.canonicalUrl,
+      canonicalUrl: nextUrl,
+      // An ATS sighting replacing an aggregator sighting is exactly the case
+      // that changes the channel, so it is recomputed rather than kept.
+      applyChannel: classifyApplyChannel({
+        canonicalUrl: nextUrl,
+        source: nextSource,
+        descriptionMd: nextDescription,
+      }),
       location: existing.location ?? input.location,
       remoteType: existing.remoteType === 'unknown' ? input.remoteType : existing.remoteType,
       salaryMin: existing.salaryMin ?? input.salaryMin ?? null,
       salaryMax: existing.salaryMax ?? input.salaryMax ?? null,
       salaryCurrency: existing.salaryCurrency ?? input.salaryCurrency ?? null,
-      descriptionMd:
-        preferNew && input.descriptionMd
-          ? input.descriptionMd
-          : (existing.descriptionMd ?? input.descriptionMd ?? null),
+      descriptionMd: nextDescription,
       postedAt: existing.postedAt ?? input.postedAt ?? null,
       rawJson: input.raw != null ? JSON.stringify(input.raw) : existing.rawJson,
     })

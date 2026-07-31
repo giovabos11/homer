@@ -2,7 +2,7 @@
 // PlaywrightApplyDriver (default, headed persistent Chromium profile) and
 // ChromeApplyDriver (Claude in Chrome — interactive only, always parks).
 import crypto from 'node:crypto';
-import type { ScreeningAnswerValue } from '@shared/types';
+import type { ParkReason, ScreeningAnswerValue } from '@shared/types';
 import type { AgentRunner } from '../agent/types';
 import type { FieldOption } from './option-match';
 
@@ -88,6 +88,11 @@ export interface ApplyDriver {
  * Thrown when the driver hits a wall a human must clear (captcha, login,
  * salary question, low-confidence generic form). The queue runner turns it
  * into a needs_human task; the browser context stays open for the user.
+ *
+ * `reason` is an explicit discriminator, not something to be re-derived from the
+ * prompt text. A dead posting once surfaced as "a Google reCAPTCHA is blocking
+ * mintmcp" purely because the error page's CSS mentioned `.grecaptcha-badge`;
+ * carrying the reason means the needs-attention card can never invent a cause.
  */
 export class ApplyBlocked extends Error {
   constructor(
@@ -95,6 +100,8 @@ export class ApplyBlocked extends Error {
     public readonly screenshots: ApplyScreenshot[] = [],
     /** Questions whose real option list the dashboard can render as buttons. */
     public readonly choices: BlockedChoice[] = [],
+    /** Why this parked — surfaced verbatim in the task payload and the UI. */
+    public readonly reason: ParkReason = 'driver_manual',
   ) {
     super(prompt);
   }
@@ -102,21 +109,66 @@ export class ApplyBlocked extends Error {
 
 // ---------- captcha / verification detection (pure, unit-testable) ----------
 
-const CAPTCHA_PATTERNS: { re: RegExp; what: string }[] = [
-  { re: /google\.com\/recaptcha|g-recaptcha|grecaptcha/i, what: 'Google reCAPTCHA' },
-  { re: /hcaptcha\.com|h-captcha|hcaptcha/i, what: 'hCaptcha' },
-  { re: /challenges\.cloudflare\.com|cf-turnstile|turnstile/i, what: 'Cloudflare Turnstile' },
-  { re: /verify\s+(that\s+)?you\s+are\s+(a\s+)?human|i('|’)?m\s+not\s+a\s+robot|are\s+you\s+a\s+robot/i, what: 'human-verification challenge' },
+/**
+ * A REAL captcha widget: the vendor's script/iframe/API host, or the container
+ * element their embed snippet creates. Deliberately anchored to markup, not to
+ * the bare product name — `.grecaptcha-badge { visibility: hidden }` in a
+ * stylesheet is not a captcha, and treating it as one is exactly how a dead
+ * Ashby posting got reported as a reCAPTCHA wall.
+ */
+const CAPTCHA_WIDGETS: { re: RegExp; what: string }[] = [
+  {
+    // v2 challenge only: the explicit container, the anchor/bframe challenge
+    // iframes, or an explicit render() call. The bare `recaptcha/api.js` script
+    // and `grecaptcha.execute()` are reCAPTCHA v3 — invisible, scored, and NOT a
+    // wall, so they must not park a task that could have submitted fine.
+    re: /class=["'][^"']*\bg-recaptcha\b[^"']*["']|(?:src|href)=["'][^"']*recaptcha\/api2\/(?:anchor|bframe)[^"']*["']|grecaptcha\.render\s*\(/i,
+    what: 'Google reCAPTCHA',
+  },
+  {
+    re: /class=["'][^"']*\bh-captcha\b[^"']*["']|(?:src|href)=["'][^"']*hcaptcha\.com\/captcha\/[^"']*["']|hcaptcha\.render\s*\(/i,
+    what: 'hCaptcha',
+  },
+  {
+    re: /class=["'][^"']*\bcf-turnstile\b[^"']*["']|(?:src|href)=["'][^"']*challenges\.cloudflare\.com\/[^"']*["']|turnstile\.render\s*\(/i,
+    what: 'Cloudflare Turnstile',
+  },
 ];
 
+/** Interstitial wording that is a challenge in its own right (no widget needed). */
+const CHALLENGE_TEXT_RE =
+  /verify\s+(that\s+)?you\s+are\s+(a\s+)?human|i('|’)?m\s+not\s+a\s+robot|are\s+you\s+a\s+robot|checking\s+your\s+browser\s+before\s+accessing/i;
+
+/** A form surface the captcha could plausibly be guarding. */
+export function hasFormContext(html: string): boolean {
+  return /<form\b/i.test(html) || /<input\b/i.test(html) || /<textarea\b/i.test(html) || /<select\b/i.test(html);
+}
+
 /**
- * Detect a captcha / verification wall in page HTML (including iframe src
- * attributes). Returns a description or null. NEVER auto-solved (PRD §8).
+ * Detect a captcha / verification wall in page HTML. Returns a description or
+ * null. NEVER auto-solved (PRD §8).
+ *
+ * A widget only counts when BOTH hold:
+ *   1. it is a genuine blocking widget (vendor container class, challenge
+ *      iframe, or an explicit render call), AND
+ *   2. the page has a form context — a captcha guarding nothing is page furniture.
+ * That pair is what a dead Ashby posting failed: its error shell carries
+ * `.grecaptcha-badge { visibility: hidden }` inside a <style> block and has no
+ * form at all, yet the old substring match reported "a Google reCAPTCHA is
+ * blocking mintmcp" and sent the user off to solve nothing.
+ *
+ * Explicit interstitial wording ("verify you are human", Cloudflare's browser
+ * check) is a wall on its own and does not need a form.
+ *
+ * Liveness runs BEFORE this in every caller, so "dead posting" always wins.
  */
 export function detectCaptcha(html: string): string | null {
-  for (const p of CAPTCHA_PATTERNS) {
-    if (p.re.test(html)) return p.what;
+  if (hasFormContext(html)) {
+    for (const p of CAPTCHA_WIDGETS) {
+      if (p.re.test(html)) return p.what;
+    }
   }
+  if (CHALLENGE_TEXT_RE.test(html)) return 'human-verification challenge';
   return null;
 }
 

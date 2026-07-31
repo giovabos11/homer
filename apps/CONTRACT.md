@@ -34,6 +34,26 @@ All request/response shapes use the types in `apps/shared/types.ts`. All respons
 - `POST /api/jobs/:id/apply` → `{ taskId, queuePosition }` — start tailoring+apply for a discovered job (manual override; enqueued at priority 10 so it jumps the bulk score backlog; screened jobs that clear the `autoAdvance` gate enter tailoring automatically after scoring). The dashboard derives the card's "Queued for tailoring" badge from the pending/running tailor task for that job.
 - `POST /api/jobs/:id/fetch-details` → `{ job: Job }` — on-demand description backfill: runs the source portal's `detail` command; falls back to an agent (haiku + WebFetch) extraction of the canonical URL treated as untrusted data. Emits a `job.scored` SSE refresh.
 - `POST /api/jobs/:id/skip` → `Job` (scam-verdict jobs stay `quarantined` instead of `skipped` so they remain findable for manual review)
+
+### Apply channel (`Job.applyChannel`)
+Derived from the canonical URL (plus source and stored description) and persisted on the job (`jobs.apply_channel`, migration `0006`). It is what decides whether the pipeline can submit at all.
+
+| Value | Meaning | What the apply worker does |
+|---|---|---|
+| `ats_form` | Greenhouse / Lever / Ashby / Workable / SmartRecruiters / Workday / … or a company careers page | verifies liveness, then drives the form |
+| `aggregator_redirect` | a syndication redirect (`whatjobs.com/pub_api__…` and friends) | follows the redirect chain first; rewrites `canonicalUrl` when it reaches an employer form, otherwise `needs_manual` |
+| `email` | HN "Who is hiring" threads, `mailto:`, or a posting whose only path is an address | drafts an approval-gated Outbox email; never opens a browser |
+| `unknown` | no URL, or a link that cannot be classified | `needs_manual`; never submitted |
+
+`isAutoApplyable(channel)` (shared) is true only for `ats_form`. `APPLY_CHANNEL_LABELS` / `APPLY_CHANNEL_HINTS` carry the badge copy. Classification runs at intake in `upsertJob` and is recomputed when an ATS sighting replaces an aggregator sighting; an idempotent boot backfill classifies pre-existing rows and adds a "cannot be auto-submitted" advisory to approved-but-unsubmitted applications whose channel is not `ats_form`.
+
+### Pre-apply liveness and re-resolution
+Before any form interaction the worker verifies the posting still exists, and **"dead posting" outranks every other diagnosis** (a stale Ashby id used to be reported as a reCAPTCHA wall because the "Job not found" shell's CSS mentions `.grecaptcha-badge`). For Ashby / Greenhouse / Lever the company board API is authoritative rather than scraping (`api.ashbyhq.com/posting-api/job-board/{slug}`, `boards-api.greenhouse.io/v1/boards/{token}/jobs`, `api.lever.co/v0/postings/{site}`); everything else uses HTTP status plus text heuristics. 401/403/429/5xx and network failures are **inconclusive, never expired**.
+
+A dead posting on a queryable board is re-matched by normalized title (narrowed by location). One confident match → `canonicalUrl` + `externalId` are rewritten in place, an advisory records the change, and the apply continues. Ambiguity or a miss → the job becomes `expired` and the apply task fails **terminally** (no retry) with the board's current openings in the failure detail.
+
+### New job statuses
+`JobStatus` gained `expired` (the posting is gone and could not be re-resolved) and `needs_manual` (the link is real but is not an employer form Homer can drive). Both are accepted by `PATCH /api/applications/:id` and `POST /api/jobs`; `expired` is excluded from `GET /api/jobs/top`. The kanban renders them in a **Manual / expired** column immediately right of Ready for review, so a card that cannot be submitted stops implying that it is about to be.
 - `POST /api/jobs/:id/override-legit` body `{ verdict: 'legit', note: string }` → `{ job: Job, taskId: number | null }` — manual legitimacy override after user review: verdict → legit with `[user override: <note>]` appended to `legitReasons`, status → `screened`; when the job has no `fitScore` yet a rescore task is enqueued (`taskId`). Structural signals alone cap at `suspicious` — a `scam` verdict (→ quarantine) requires the agent verification to concur; this endpoint is the human escape hatch for both.
 
 ## Applications
@@ -73,6 +93,8 @@ Older builds wrote those notes into `answers_json` as `{ status: 'needs_user' }`
 - `POST /api/queue/rate` body `{ discoveryIntervalMinutes }` → `Settings`
 - `POST /api/queue/retry-failed` body `{ type?: TaskType }` → `{ requeued: number }` — bulk retry: every failed task (optionally filtered to one type) back to `pending` with `attempts` reset to 0; explicit user cancellations (`lastError: 'Cancelled by user'`) are left alone. Emits a fresh `queue.snapshot`.
 - `POST /api/queue/tasks/:id/resolve-human` body `{ answers?: Record<string,string> }` → `QueueTask` (user did the manual step; worker resumes)  (FR-25). When the parked task is an `apply` and its payload carries `choices` (the field's REAL option list the driver refused to guess at), `answers` records the user's picks onto the application's screening answers before resuming.
+- A parked `apply` task's payload also carries `parkReason: ParkReason` — `dead_posting | captcha | login_wall | unmatched_field | low_confidence | driver_manual` — an explicit discriminator rather than something inferred from the prompt text. The needs-attention card renders it as a badge (`PARK_REASON_LABELS`). `dead_posting` never actually parks: it expires the job and fails the task instead.
+- Terminal failures: outcomes a retry cannot change (dead posting, not an application form) go straight to `failed` with no backoff (`TerminalFailure` → `TaskQueue.failNow`), so a gone posting stops consuming apply slots. `attempts` stays at its current value.
 - `POST /api/queue/tasks/:id/retry` → `QueueTask`
 - `POST /api/queue/tasks/:id/cancel` → `QueueTask & { aborted: boolean }` — cancels **pending AND running** tasks: the in-flight `AbortController` kills the spawned Claude CLI process tree, the slot frees, and the task becomes `failed` with `lastError: 'Cancelled by user'` (bulk retry always skips those). A cancelled `tailor` rolls its job back to `screened`.
 - `POST /api/queue/cancel-all` body `{ scope: 'running' | 'pending' | 'all', type?: TaskType }` → `{ cancelled: number }`
@@ -85,7 +107,7 @@ Older builds wrote those notes into `answers_json` as `{ status: 'needs_user' }`
 ## Emails & outbox
 - `GET  /api/emails?direction&classification&limit&offset` → `{ total: number, emails: EmailRecord[] }` (default limit 50, max 500; newest first)  (FR-20)
 - `PATCH /api/emails/:id` body `{ applicationId: number | null }` → `EmailRecord` — "this email is about that application". Sets `matchBasis: 'manual'`, clears `matchCandidates`, and applies the status effect the classification implies (so resolving an ambiguous rejection closes the right application, and an offer moves it to Offer). `null` unlinks. Inbound only; 409 on an outbound row, 404 on an unknown application.
-- `GET  /api/outbox` → `EmailRecord[]` (drafts with `needsApproval:true`)
+- `GET  /api/outbox` → `EmailRecord[]` (drafts with `needsApproval:true`). Also holds **application emails** for `email`-channel postings: the apply worker drafts one per application (thread key `application-app-<id>`, body naming the tailored PDFs to attach) instead of driving a browser, and it sends only through the normal approve path. Approving the application never sends anything by itself.
 - `POST /api/outbox/:id/approve` → `EmailRecord` (queued for send in next session)  (FR-11)
 - `POST /api/outbox/:id/reject` body `{ reason? }` → `EmailRecord`
 - `POST /api/emails/scan` → `{ taskId }` (manual trigger of the periodic scan)

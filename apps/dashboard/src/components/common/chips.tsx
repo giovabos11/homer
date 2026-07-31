@@ -1,7 +1,9 @@
-import type { ConnectionStatus, JobStatus, LegitVerdict } from '@shared';
+import type { ApplyChannel, ConnectionStatus, JobStatus, LegitVerdict } from '@shared';
+import { APPLY_CHANNEL_HINTS } from '@shared';
 import {
-  Banknote, Building2, Flame, Globe, KeyRound, Landmark, Link2, Linkedin, ListChecks,
-  MessageSquare, Newspaper, PenLine, Rss, Shield, ShieldAlert, ShieldCheck, ShieldX, Sparkles,
+  AtSign, Banknote, Building2, CornerUpRight, FileCheck2, Flame, Globe, HelpCircle, KeyRound,
+  Landmark, Link2, Linkedin, ListChecks, MessageSquare, Newspaper, PenLine, Rss, Shield,
+  ShieldAlert, ShieldCheck, ShieldX, Sparkles,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Tip } from '@/components/ui/controls';
@@ -74,6 +76,46 @@ export function sourceLabel(source: string): string {
   return SOURCE_META[source]?.label ?? source;
 }
 
+/* ----------------------------- ChannelBadge ----------------------------- */
+/**
+ * What kind of apply target this posting is — the one thing that decides
+ * whether Homer can submit it at all.
+ *
+ * `ats_form` is the expected case, so it stays deliberately quiet (outline, no
+ * fill): scanning a column, the coloured badges are the exceptions that will
+ * NOT submit themselves. Every card still states its channel rather than
+ * relying on "no badge means fine".
+ */
+const CHANNEL_META: Record<
+  ApplyChannel,
+  { icon: typeof Globe; label: string; variant: 'outline' | 'warn' | 'serious' | 'default' }
+> = {
+  ats_form: { icon: FileCheck2, label: 'ATS form', variant: 'outline' },
+  aggregator_redirect: { icon: CornerUpRight, label: 'Aggregator', variant: 'warn' },
+  email: { icon: AtSign, label: 'Email', variant: 'serious' },
+  unknown: { icon: HelpCircle, label: 'Unclassified', variant: 'default' },
+};
+
+/**
+ * `withLabel` defaults to "only when it is worth reading": on a board of a
+ * hundred cards, spelling out "ATS form" a hundred times is noise, so the
+ * expected case is icon-only (still hoverable) and the exceptions keep their
+ * word. Detail views pass `withLabel` explicitly.
+ */
+export function ChannelBadge({ channel, withLabel }: { channel: ApplyChannel; withLabel?: boolean }) {
+  const meta = CHANNEL_META[channel] ?? CHANNEL_META.unknown;
+  const Icon = meta.icon;
+  const showLabel = withLabel ?? channel !== 'ats_form';
+  return (
+    <Tip label={APPLY_CHANNEL_HINTS[channel]}>
+      <Badge variant={meta.variant} className="cursor-default">
+        <Icon className="h-3 w-3" />
+        {showLabel && meta.label}
+      </Badge>
+    </Tip>
+  );
+}
+
 /* ------------------------------ StatusPill ------------------------------ */
 const STATUS_DOT: Record<JobStatus, string> = {
   discovered: 'var(--ink-3)',
@@ -89,6 +131,8 @@ const STATUS_DOT: Record<JobStatus, string> = {
   withdrawn: 'var(--ink-3)',
   quarantined: 'var(--critical)',
   skipped: 'var(--ink-3)',
+  expired: 'var(--ink-3)',
+  needs_manual: 'var(--serious)',
 };
 
 export function StatusPill({ status, className }: { status: JobStatus; className?: string }) {

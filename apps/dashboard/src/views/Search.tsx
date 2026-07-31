@@ -6,7 +6,8 @@ import {
   Link2, Loader2, Pause, PenLine, Play, Radar, RotateCcw, Search as SearchIcon, Table2,
   Wand2, XCircle,
 } from 'lucide-react';
-import type { Job, JobStatus, QueueTask, RemoteType, SourceBudget } from '@shared';
+import type { Job, JobStatus, ParkReason, QueueTask, RemoteType, SourceBudget } from '@shared';
+import { PARK_REASON_LABELS } from '@shared';
 import { api } from '@/api/client';
 import { useStore } from '@/store/useStore';
 import { downloadCsv } from '@/lib/csv';
@@ -419,6 +420,9 @@ function NeedsHumanCard({ t, label }: { t: QueueTask; label: string }) {
   const [busy, setBusy] = useState(false);
   const choices = (t.payload?.choices as TaskChoice[] | undefined) ?? [];
   const answered = choices.every((c) => picked[c.question]);
+  const rawReason = t.payload?.parkReason;
+  const parkReason =
+    typeof rawReason === 'string' && rawReason in PARK_REASON_LABELS ? (rawReason as ParkReason) : null;
 
   const resolve = async () => {
     setBusy(true);
@@ -440,7 +444,13 @@ function NeedsHumanCard({ t, label }: { t: QueueTask; label: string }) {
       <div className="flex items-start gap-2.5">
         <HandHelping className="h-4.5 w-4.5 text-warn shrink-0 mt-0.5" />
         <div className="flex-1 min-w-0">
-          <p className="text-xs font-semibold text-ink">Your turn: {label}</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-xs font-semibold text-ink">Your turn: {label}</p>
+            {/* The worker records WHY it stopped. Naming the blocker beats
+                leaving the reader to infer it from a paragraph of prompt — a
+                dead posting once read as a captcha for exactly that reason. */}
+            {parkReason && <Badge variant="warn">{PARK_REASON_LABELS[parkReason]}</Badge>}
+          </div>
           <p className="text-xs text-ink-2 mt-0.5 leading-relaxed whitespace-pre-wrap">{t.humanPrompt}</p>
 
           {choices.length > 0 && (

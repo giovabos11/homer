@@ -24,6 +24,7 @@ import { ApiError, idParam, parseBody, parseQuery } from './util';
 const STATUS_VALUES = [
   'discovered', 'screened', 'tailoring', 'ready_for_review', 'applied', 'interview',
   'offer', 'hired', 'rejected', 'no_response', 'withdrawn', 'quarantined', 'skipped',
+  'expired', 'needs_manual',
 ] as const;
 
 export function applicationRoutes(ctx: AppContext): Router {

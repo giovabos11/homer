@@ -6,6 +6,7 @@ import {
 } from 'recharts';
 import { Clock, DownloadCloud, ExternalLink, Info, Loader2, MapPin, Rocket, ShieldAlert, ShieldCheck, ShieldX, SkipForward, X } from 'lucide-react';
 import type { Job } from '@shared';
+import { APPLY_CHANNEL_HINTS, APPLY_CHANNEL_LABELS } from '@shared';
 import { api } from '@/api/client';
 import { useStore } from '@/store/useStore';
 import { Button } from '@/components/ui/button';
@@ -13,7 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Markdown } from '@/components/common/Markdown';
 import { FitRing, FitScoreTip } from '@/components/common/rings';
-import { LegitBadge, SourceIcon, StatusPill, sourceLabel } from '@/components/common/chips';
+import { ChannelBadge, LegitBadge, SourceIcon, StatusPill, sourceLabel } from '@/components/common/chips';
 import { REMOTE_LABEL, salaryLabel, fmtDate } from '@/lib/format';
 
 interface DrawerState {
@@ -235,6 +236,7 @@ export function JobDrawer() {
                     <MapPin className="h-3 w-3" />
                     {job.remoteType === 'remote' ? 'Remote (US)' : `${REMOTE_LABEL[job.remoteType]}${job.location ? ` · ${job.location}` : ''}`}
                   </Badge>
+                  <ChannelBadge channel={job.applyChannel} withLabel />
                 </div>
               </div>
               <button onClick={close} className="text-ink-3 hover:text-ink rounded-md p-1 hover:bg-overlay cursor-pointer">
@@ -252,6 +254,20 @@ export function JobDrawer() {
 
               {(job.legitVerdict === 'suspicious' || job.legitVerdict === 'scam') && (
                 <LegitReviewPanel job={job} onUpdated={setDetail} />
+              )}
+
+              {/* Only the exceptions get a paragraph. An ATS form is what the
+                  pipeline expects, and saying so on every job would be noise. */}
+              {job.applyChannel !== 'ats_form' && (
+                <div className="rounded-lg border border-serious/30 bg-serious/8 px-3 py-2.5 flex items-start gap-2">
+                  <Info className="h-4 w-4 text-serious shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-2">
+                      {APPLY_CHANNEL_LABELS[job.applyChannel]}
+                    </p>
+                    <p className="text-xs text-ink-2 leading-relaxed mt-0.5">{APPLY_CHANNEL_HINTS[job.applyChannel]}</p>
+                  </div>
+                </div>
               )}
 
               {job.fitBreakdown && <FitRadar job={job} />}

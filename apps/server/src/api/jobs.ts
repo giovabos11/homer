@@ -61,6 +61,7 @@ const createJobSchema = z.object({
     .enum([
       'discovered', 'screened', 'tailoring', 'ready_for_review', 'applied', 'interview',
       'offer', 'hired', 'rejected', 'no_response', 'withdrawn', 'quarantined', 'skipped',
+      'expired', 'needs_manual',
     ])
     .default('discovered'),
   source: z.string().default('manual'),
@@ -116,7 +117,7 @@ export function jobRoutes(ctx: AppContext): Router {
       .from(jobs)
       .where(
         sql`COALESCE(${jobs.salaryMax}, ${jobs.salaryMin}) IS NOT NULL
-            AND ${jobs.status} NOT IN ('quarantined','skipped','rejected')
+            AND ${jobs.status} NOT IN ('quarantined','skipped','rejected','expired')
             AND ${jobs.legitVerdict} NOT IN ('suspicious','scam')`,
       )
       .all();

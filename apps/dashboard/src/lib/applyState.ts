@@ -7,7 +7,9 @@
 // including the case where the answer is "nothing, the queue is paused".
 import type { Application, QueueTask } from '@shared';
 
-export type ApplyPhase = 'queued' | 'paused' | 'running' | 'needs_you' | 'failed' | 'approved';
+export type ApplyPhase =
+  | 'queued' | 'paused' | 'running' | 'needs_you' | 'failed' | 'approved'
+  | 'expired' | 'manual';
 
 export interface ApplyState {
   phase: ApplyPhase;
@@ -41,6 +43,30 @@ export function applyState(app: Application, tasks: QueueTask[], queuePaused: bo
 
   const task = findApplyTask(app.id, tasks);
   const taskId = task?.id ?? null;
+
+  // Outcomes the pipeline reached on its own. These beat the task state: the
+  // task did fail, but "Apply failed — retry it" would be a lie when the
+  // posting is gone or the link was never an employer form.
+  if (app.status === 'expired') {
+    return {
+      phase: 'expired',
+      taskId,
+      label: 'Posting no longer available',
+      detail:
+        task?.lastError ??
+        'The posting was gone by the time Homer opened it, and the company board had no clear replacement. Nothing was submitted.',
+    };
+  }
+  if (app.status === 'needs_manual') {
+    return {
+      phase: 'manual',
+      taskId,
+      label: 'Apply by hand',
+      detail:
+        task?.lastError ??
+        'This link is not an employer application form, so Homer stopped instead of submitting. Open the posting and apply yourself.',
+    };
+  }
 
   if (task?.state === 'running') {
     return { phase: 'running', taskId, label: 'Applying now', detail: 'The apply driver is filling the employer form.' };

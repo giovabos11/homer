@@ -2,10 +2,82 @@
 // Server imports via tsconfig path alias "@shared/*"; dashboard via vite alias "@shared".
 
 export type GateMode = 'review' | 'auto' | 'hybrid';
+/**
+ * `expired` and `needs_manual` are apply-time truths, not user decisions:
+ *   expired      — the posting is gone (404 / "no longer accepting" / the ATS
+ *                  board no longer lists it) and could not be re-resolved.
+ *   needs_manual — the link is real but is not an employer form Homer can drive
+ *                  (an aggregator redirect that dead-ends, an email-only posting
+ *                  with no address to write to).
+ * Both exist so a card can leave "Ready for review" instead of sitting there
+ * implying a submission is about to happen.
+ */
 export type JobStatus =
   | 'discovered' | 'screened' | 'tailoring' | 'ready_for_review'
   | 'applied' | 'interview' | 'offer' | 'hired' | 'rejected'
-  | 'no_response' | 'withdrawn' | 'quarantined' | 'skipped';
+  | 'no_response' | 'withdrawn' | 'quarantined' | 'skipped'
+  | 'expired' | 'needs_manual';
+
+/**
+ * How this posting can actually be applied to — derived from the canonical URL
+ * (plus the source and the stored description) and persisted on the job.
+ *
+ *  - `ats_form`            a real application form: Greenhouse / Lever / Ashby /
+ *                          Workable / SmartRecruiters / Workday / … or a company
+ *                          careers page. The only channel the driver can submit.
+ *  - `aggregator_redirect` a syndication link (whatjobs `pub_api__…`, and
+ *                          friends). Not a form: it has to be followed to the
+ *                          employer first, and it often dead-ends.
+ *  - `email`               apply by writing to a human — HN "Who is hiring"
+ *                          threads and any posting whose only path is an address.
+ *  - `unknown`             no URL, or a link Homer cannot classify.
+ */
+export type ApplyChannel = 'ats_form' | 'aggregator_redirect' | 'email' | 'unknown';
+
+/** Short badge copy per channel (kanban card, job drawer). */
+export const APPLY_CHANNEL_LABELS: Record<ApplyChannel, string> = {
+  ats_form: 'ATS form',
+  aggregator_redirect: 'Aggregator link',
+  email: 'Apply by email',
+  unknown: 'Unclassified link',
+};
+
+/** One-line explanation of what the channel means for automation. */
+export const APPLY_CHANNEL_HINTS: Record<ApplyChannel, string> = {
+  ats_form: 'A real application form. Homer can fill and submit this one.',
+  aggregator_redirect:
+    'A job-aggregator redirect, not an employer form. Homer follows it to the real posting before applying, and hands it back to you when it dead-ends on the aggregator.',
+  email:
+    'This posting is applied to by email. Homer drafts the message into the Outbox and waits for your approval instead of driving a browser.',
+  unknown: 'Homer could not tell what this link is, so it will not submit anything automatically.',
+};
+
+/** Channels a browser driver can actually submit without human help. */
+export function isAutoApplyable(channel: ApplyChannel): boolean {
+  return channel === 'ats_form';
+}
+
+/**
+ * Why an apply task stopped and asked for a human. Explicit discriminators so
+ * the needs-attention card can say the true thing instead of guessing from the
+ * prompt text (a dead posting used to be reported as a captcha).
+ */
+export type ParkReason =
+  | 'dead_posting'
+  | 'captcha'
+  | 'login_wall'
+  | 'unmatched_field'
+  | 'low_confidence'
+  | 'driver_manual';
+
+export const PARK_REASON_LABELS: Record<ParkReason, string> = {
+  dead_posting: 'Posting no longer available',
+  captcha: 'Captcha blocking the form',
+  login_wall: 'Account or login required',
+  unmatched_field: 'A form question needs your answer',
+  low_confidence: 'Form could not be mapped confidently',
+  driver_manual: 'Human-paced apply',
+};
 export type RemoteType = 'remote' | 'hybrid' | 'onsite' | 'unknown';
 export type LegitVerdict = 'legit' | 'suspicious' | 'scam' | 'unchecked';
 export type TaskState = 'pending' | 'running' | 'paused' | 'needs_human' | 'waiting_session' | 'done' | 'failed';
@@ -67,6 +139,8 @@ export interface Job {
   legitVerdict: LegitVerdict;
   legitReasons: string[];
   managed: 'auto' | 'manual';
+  /** Derived + persisted: what kind of apply target the canonical URL is. */
+  applyChannel: ApplyChannel;
   /** Expected-value rank: salaryMid × (fitScore/100)^1.5 (×0.85 when the salary
    *  is predicted). Only populated by GET /api/jobs/top; null when unscored. */
   opportunityScore?: number | null;

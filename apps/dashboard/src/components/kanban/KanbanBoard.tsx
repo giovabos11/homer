@@ -5,7 +5,8 @@ import {
 } from '@dnd-kit/core';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  AlertTriangle, CheckCircle2, Clock, Eye, GripVertical, Inbox, Loader2, PauseCircle, XCircle, Zap,
+  AlertTriangle, CalendarX2, CheckCircle2, Clock, Eye, GripVertical, Hand, Inbox, Loader2,
+  PauseCircle, XCircle, Zap,
   type LucideIcon,
 } from 'lucide-react';
 import type { Application, Job, JobStatus } from '@shared';
@@ -19,7 +20,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tip } from '@/components/ui/controls';
 import { FitRing, FitScoreTip } from '@/components/common/rings';
-import { LegitBadge, SourceIcon } from '@/components/common/chips';
+import { ChannelBadge, LegitBadge, SourceIcon, StatusPill } from '@/components/common/chips';
 import { useJobDrawer } from '@/components/common/JobDrawer';
 import { ReviewDialog } from './ReviewDialog';
 
@@ -36,6 +37,16 @@ const COLUMNS: Column[] = [
   { key: 'screened', label: 'Screened', statuses: ['screened'], drop: () => 'screened' },
   { key: 'tailoring', label: 'Tailoring', statuses: ['tailoring'], drop: () => 'tailoring' },
   { key: 'ready', label: 'Ready for review', statuses: ['ready_for_review'], drop: () => 'ready_for_review', accent: 'var(--warn-raw)' },
+  // Where an application goes when Homer cannot finish it: the posting is gone,
+  // or the link was never an employer form. Sitting in Ready for review implied
+  // a submission that was never going to happen.
+  {
+    key: 'manual',
+    label: 'Manual / expired',
+    statuses: ['needs_manual', 'expired'],
+    drop: () => 'needs_manual',
+    accent: 'var(--serious)',
+  },
   { key: 'applied', label: 'Applied', statuses: ['applied'], drop: () => 'applied', accent: 'var(--accent)' },
   { key: 'interview', label: 'Interview', statuses: ['interview'], drop: () => 'interview', accent: 'var(--series-3)' },
   { key: 'offer', label: 'Offer', statuses: ['offer', 'hired'], drop: () => 'offer', accent: 'var(--good)' },
@@ -63,6 +74,8 @@ function ApprovedIndicator({ state, onResume, resuming }: { state: ApplyState; o
     paused: { icon: PauseCircle, className: 'border-warn-raw/30 bg-warn-raw/10 text-warn' },
     needs_you: { icon: AlertTriangle, className: 'border-warn-raw/30 bg-warn-raw/10 text-warn' },
     failed: { icon: XCircle, className: 'border-critical/30 bg-critical/10 text-critical' },
+    expired: { icon: CalendarX2, className: 'border-line-strong bg-overlay text-ink-3' },
+    manual: { icon: Hand, className: 'border-serious/30 bg-serious/10 text-serious' },
   };
   const { icon: Icon, className } = TONE[state.phase];
   return (
@@ -139,6 +152,8 @@ function KanbanCard({ job, app, dragging, queued }: { job: Job; app?: Applicatio
         )}
         <LegitBadge verdict={job.legitVerdict} reasons={job.legitReasons} compact />
         <SourceIcon source={job.source} />
+        <ChannelBadge channel={job.applyChannel} />
+        {(job.status === 'expired' || job.status === 'needs_manual') && <StatusPill status={job.status} />}
         {queued && (
           <Badge variant="violet">
             <Clock className="h-3 w-3" /> Queued for tailoring

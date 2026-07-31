@@ -43,6 +43,9 @@ export class ChromeApplyDriver implements ApplyDriver {
         `5. Submit only if you (the human) are satisfied, then resolve this task on the dashboard.`,
         `Pre-staged data: ${JSON.stringify(staged)}`,
       ].join('\n'),
+      [],
+      [],
+      'driver_manual',
     );
   }
 

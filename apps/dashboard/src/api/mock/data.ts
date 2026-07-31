@@ -90,6 +90,7 @@ function job(o: Partial<Job> & Pick<Job, 'company' | 'title' | 'source' | 'statu
       ? ['Company has verified web presence and engineering blog', 'Posting matches careers page listing', 'Salary within market band for the role']
       : []),
     managed: o.managed ?? 'auto',
+    applyChannel: o.applyChannel ?? 'ats_form',
   };
 }
 
@@ -111,6 +112,13 @@ export const JOBS: Job[] = [
   // --------------------------- ready_for_review --------------------------
   job({ company: 'Plaid', title: 'Software Engineer, Web', source: 'lever', status: 'ready_for_review', fitScore: 90, salaryMin: 152000, salaryMax: 203000, postedAt: daysAgo(10), firstSeen: daysAgo(9) }),
   job({ company: 'Airtable', title: 'Software Engineer, Growth', source: 'greenhouse', status: 'ready_for_review', fitScore: 78, salaryMin: 143000, salaryMax: 185000, location: 'Austin, TX', remoteType: 'hybrid', postedAt: daysAgo(11), firstSeen: daysAgo(10) }),
+  // Not every approved card can be submitted: the demo carries one of each
+  // non-form channel so the badges mean something in mock mode too.
+  job({ company: 'Annex Risk', title: 'Full-stack + Backend Engineer', source: 'hn_hiring', status: 'ready_for_review', applyChannel: 'email', fitScore: 75, canonicalUrl: 'https://news.ycombinator.com/item?id=48756811', location: 'Bay Area, Austin', remoteType: 'onsite', postedAt: daysAgo(7), firstSeen: daysAgo(6) }),
+  job({ company: 'Harnham', title: 'Software Engineer', source: 'freehire', status: 'ready_for_review', applyChannel: 'aggregator_redirect', fitScore: 78, salaryMin: 170000, salaryMax: 200000, canonicalUrl: 'https://www.whatjobs.com/pub_api__cpl__2626788452__7065', postedAt: daysAgo(8), firstSeen: daysAgo(7) }),
+  // --------------------------- manual / expired ---------------------------
+  job({ company: 'mintmcp', title: 'Software Engineer', source: 'freehire', status: 'expired', fitScore: 78, canonicalUrl: 'https://jobs.ashbyhq.com/mintmcp/b3334a8b-521e-4989-82b1-988ff52a2671', location: 'San Francisco, CA', remoteType: 'hybrid', postedAt: daysAgo(15), firstSeen: daysAgo(14) }),
+  job({ company: 'Pocketflows', title: 'Software Engineer', source: 'freehire', status: 'needs_manual', applyChannel: 'aggregator_redirect', fitScore: 71, canonicalUrl: 'https://www.whatjobs.com/pub_api__cpl__2626789213__7065', postedAt: daysAgo(9), firstSeen: daysAgo(8) }),
   // -------------------------------- applied -------------------------------
   job({ company: 'Stripe', title: 'Software Engineer, Payments Platform', source: 'greenhouse', status: 'applied', fitScore: 93, salaryMin: 165000, salaryMax: 230000, location: 'South San Francisco, CA', remoteType: 'hybrid', postedAt: daysAgo(14), firstSeen: daysAgo(13) }),
   job({ company: 'Figma', title: 'Software Engineer, Early Career', source: 'greenhouse', status: 'applied', fitScore: 86, salaryMin: 149000, salaryMax: 188000, location: 'San Francisco, CA', remoteType: 'hybrid', postedAt: daysAgo(12), firstSeen: daysAgo(11) }),

@@ -250,6 +250,15 @@ export class TaskQueue {
     });
   }
 
+  /**
+   * Terminal failure — no backoff, no retry. For outcomes a retry cannot change
+   * (the posting is gone; the link is not an application form). Attempts are
+   * left as they are so the trail still shows what happened.
+   */
+  failNow(id: number, error: string): TaskRow {
+    return this.setState(id, 'failed', { lastError: error });
+  }
+
   pauseTask(id: number): TaskRow {
     return this.setState(id, 'paused', {});
   }

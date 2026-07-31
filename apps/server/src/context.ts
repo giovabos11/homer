@@ -23,6 +23,8 @@ import { PlaywrightPdfRenderer, type PdfRenderer } from './docs/render';
 import type { ApplyDriver } from './apply/driver';
 import { PlaywrightApplyDriver } from './apply/playwright-driver';
 import { ChromeApplyDriver } from './apply/chrome-driver';
+import type { FetchLike } from './apply/liveness';
+import { backfillApplyChannels, describeBackfill } from './apply/backfill';
 import { ensureDir, repoRoot, serverRoot } from './util/paths';
 
 export interface AppContext {
@@ -48,6 +50,12 @@ export interface AppContext {
   renderer: PdfRenderer;
   /** Builds the apply driver named in settings (tests inject fakes). */
   applyDriverFactory: (name: 'playwright' | 'chrome') => ApplyDriver;
+  /**
+   * Plain HTTP client for pre-apply checks (posting liveness, ATS board
+   * lookups, aggregator redirect chains). Injectable so tests stay hermetic —
+   * no test ever reaches the open internet.
+   */
+  httpFetch: FetchLike;
   simulate: boolean;
   version: string;
   close(): void;
@@ -65,6 +73,7 @@ export interface ContextOptions {
   simulate?: boolean;
   renderer?: PdfRenderer;
   applyDriverFactory?: (name: 'playwright' | 'chrome') => ApplyDriver;
+  httpFetch?: FetchLike;
 }
 
 function readVersion(): string {
@@ -101,6 +110,15 @@ export function createContext(options: ContextOptions = {}): AppContext {
   const bus = new EventBus();
   const settings = new SettingsStore(handle.db, config.settings);
   settings.seed();
+
+  // Idempotent apply-channel backfill: classify every job's apply target and
+  // annotate approved applications that cannot be auto-submitted, so the Ready
+  // for review column stops implying a submission that will never happen.
+  const channels = backfillApplyChannels(handle.db);
+  if (channels.updated > 0 || channels.flagged > 0) {
+    // eslint-disable-next-line no-console
+    console.log(describeBackfill(channels));
+  }
 
   const standing = new StandingAnswerStore(handle.db);
 
@@ -162,6 +180,7 @@ export function createContext(options: ContextOptions = {}): AppContext {
     monitor: undefined as unknown as ConnectionsMonitor, // set below (monitor needs ctx)
     renderer,
     applyDriverFactory,
+    httpFetch: options.httpFetch ?? ((globalThis.fetch as unknown as FetchLike)),
     simulate,
     version: readVersion(),
     close() {

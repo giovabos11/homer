@@ -28,6 +28,37 @@ export interface WorldOpts {
   repoRoot?: string;
   renderer?: ContextOptions['renderer'];
   applyDriverFactory?: ContextOptions['applyDriverFactory'];
+  /**
+   * Stubbed HTTP for the pre-apply checks (liveness, ATS boards, redirects).
+   * Defaults to an offline stub: no test ever reaches the open internet, and an
+   * unreachable posting is treated as inconclusive (never as expired).
+   */
+  httpFetch?: ContextOptions['httpFetch'];
+}
+
+/** Offline default: every request fails, which the liveness check reads as "unknown". */
+export const offlineFetch: NonNullable<ContextOptions['httpFetch']> = async () => {
+  throw new Error('network disabled in tests');
+};
+
+/**
+ * Build a stub fetch from a URL → response map. Values may be a string body
+ * (200) or `{ status, body, headers }`. Unlisted URLs 404.
+ */
+export function stubFetch(
+  routes: Record<string, string | { status?: number; body?: string; headers?: Record<string, string> }>,
+): NonNullable<ContextOptions['httpFetch']> {
+  return async (url: string) => {
+    const hit = routes[url];
+    const spec = typeof hit === 'string' ? { status: 200, body: hit } : (hit ?? { status: 404, body: 'Not Found' });
+    const headers = spec.headers ?? {};
+    return {
+      status: spec.status ?? 200,
+      url,
+      headers: { get: (name: string) => headers[name.toLowerCase()] ?? headers[name] ?? null },
+      text: async () => spec.body ?? '',
+    };
+  };
 }
 
 export function makeWorld(opts: WorldOpts = {}): TestWorld {
@@ -51,6 +82,7 @@ export function makeWorld(opts: WorldOpts = {}): TestWorld {
     repoRoot: opts.repoRoot,
     renderer: opts.renderer,
     applyDriverFactory: opts.applyDriverFactory,
+    httpFetch: opts.httpFetch ?? offlineFetch,
     probes: {
       claudeVersion: async () => '2.1.0 (Claude Code) [test]',
       playwrightResolvable: async () => true,

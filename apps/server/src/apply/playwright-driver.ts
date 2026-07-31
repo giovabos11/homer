@@ -26,9 +26,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
+import type { ParkReason } from '@shared/types';
 import { fenceUntrusted, strictJsonFooter } from '../agent/prompts';
 import { FLAGGED_FOR_USER, defaultsFromAnswers, matchScreeningAnswer, type ScreeningDefault } from '../docs/screening';
 import { buildOptionPrompt, matchOption, type FieldOption } from './option-match';
+import { detectDeadPosting } from './liveness';
 import {
   ApplyBlocked,
   detectAts,
@@ -77,7 +79,8 @@ export interface FillAction {
 
 export interface FillBlocker {
   question: string;
-  reason: 'salary' | 'start_date' | 'flagged' | 'unknown' | 'no_option_match';
+  /** `low_confidence` is the agent-mapping pass giving up, not a form question. */
+  reason: 'salary' | 'start_date' | 'flagged' | 'unknown' | 'no_option_match' | 'low_confidence';
   /** Real, legal options for a select / radio / checkbox group. */
   options?: FieldOption[];
   /** The resolved answer that could not be mapped onto those options. */
@@ -426,23 +429,40 @@ export class PlaywrightApplyDriver implements ApplyDriver {
         /* screenshot failures never break the run */
       }
     };
-    const blocked = async (prompt: string, choices: BlockedChoice[] = []): Promise<never> => {
+    const blocked = async (prompt: string, choices: BlockedChoice[] = [], reason: ParkReason = 'driver_manual'): Promise<never> => {
       await snap('parked');
       // Browser stays open on purpose (FR-25): the user finishes manually.
-      throw new ApplyBlocked(prompt, shots, choices);
+      throw new ApplyBlocked(prompt, shots, choices, reason);
     };
 
     const ats = detectAts(args.target.url);
     const timeout = this.opts.navTimeoutMs ?? 60000;
-    await page.goto(args.target.url, { waitUntil: 'domcontentloaded', timeout });
+    const response = await page.goto(args.target.url, { waitUntil: 'domcontentloaded', timeout });
     await page.waitForTimeout(400);
 
+    // ORDER MATTERS. Liveness is checked first, on the RENDERED page, so a
+    // posting that no longer exists is always diagnosed as such. The reverse
+    // order is what produced "a Google reCAPTCHA is blocking mintmcp" for a URL
+    // whose only content was Ashby's "Job not found" shell.
+    const landed = await page.content();
+    const dead = detectDeadPosting({ status: response?.status() ?? null, html: landed });
+    if (dead.dead) {
+      return blocked(
+        `The posting for ${args.target.company} — ${args.target.title} is no longer available (${dead.evidence ?? dead.reason}). ` +
+          'Nothing was filled in and nothing was submitted.',
+        [],
+        'dead_posting',
+      );
+    }
+
     // Captcha check before anything is touched. Never auto-solved.
-    let captcha = detectCaptcha(await page.content());
+    let captcha = detectCaptcha(landed);
     if (captcha) {
       return blocked(
         `A ${captcha} is blocking ${args.target.company} — ${args.target.title}. ` +
           'Solve it manually in the open browser window, then resolve this task. Captchas are never solved automatically.',
+        [],
+        'captcha',
       );
     }
 
@@ -460,27 +480,27 @@ export class PlaywrightApplyDriver implements ApplyDriver {
         const password = generateStrongPassword();
         const filled = await this.fillLogin(page, fields, args.profile.email, password, true);
         if (!filled) {
-          return blocked(`An account is required at ${site} and the sign-up form could not be filled automatically. Create the account manually (use ${args.profile.email}), then resolve this task.`);
+          return blocked(`An account is required at ${site} and the sign-up form could not be filled automatically. Create the account manually (use ${args.profile.email}), then resolve this task.`, [], 'login_wall');
         }
         await args.credentials.save(site, args.profile.email, password);
         captcha = detectCaptcha(await page.content());
-        if (captcha) return blocked(`A ${captcha} appeared during account creation at ${site}. Solve it manually, then resolve this task. The generated password is stored in the vault.`);
+        if (captcha) return blocked(`A ${captcha} appeared during account creation at ${site}. Solve it manually, then resolve this task. The generated password is stored in the vault.`, [], 'captcha');
       } else {
         const creds = await args.credentials.lookup(site);
         if (!creds) {
-          return blocked(`${site} requires a login and no credential is stored in the vault. Log in manually in the open browser (or add the credential in Connections), then resolve this task.`);
+          return blocked(`${site} requires a login and no credential is stored in the vault. Log in manually in the open browser (or add the credential in Connections), then resolve this task.`, [], 'login_wall');
         }
         const filled = await this.fillLogin(page, fields, creds.username, creds.password, true);
         if (!filled) {
-          return blocked(`${site} requires a login; the stored credential could not be applied automatically. Log in manually in the open browser, then resolve this task.`);
+          return blocked(`${site} requires a login; the stored credential could not be applied automatically. Log in manually in the open browser, then resolve this task.`, [], 'login_wall');
         }
       }
       await page.waitForTimeout(1500);
       captcha = detectCaptcha(await page.content());
-      if (captcha) return blocked(`A ${captcha} appeared after login. Solve it manually, then resolve this task.`);
+      if (captcha) return blocked(`A ${captcha} appeared after login. Solve it manually, then resolve this task.`, [], 'captcha');
       fields = await collectFields(page);
       if (isLoginWall(fields)) {
-        return blocked(`Login at ${site} did not reach the application form. Finish logging in manually, then resolve this task.`);
+        return blocked(`Login at ${site} did not reach the application form. Finish logging in manually, then resolve this task.`, [], 'login_wall');
       }
     }
 
@@ -505,12 +525,18 @@ export class PlaywrightApplyDriver implements ApplyDriver {
           options: b.options!.filter((o) => o.label.trim() !== ''),
           ...(b.answer ? { answer: b.answer } : {}),
         }));
+      // "The mapper gave up" and "this question needs you" are different things
+      // to the person reading the needs-attention card.
+      const parkReason: ParkReason = plan.blockers.some((b) => b.reason === 'low_confidence')
+        ? 'low_confidence'
+        : 'unmatched_field';
       return blocked(
         `The ${ats} application form for ${args.target.company} — ${args.target.title} has ${plan.blockers.length} question(s) that must not be answered automatically:\n` +
           `${lines.join('\n')}\n` +
           `The rest of the form data is pre-staged below; complete these fields in the open browser, submit, then resolve this task.\n` +
           `Pre-staged data: ${JSON.stringify({ ...identitySummary(args.profile), answers: usableProfileAnswers(args.profile) })}`,
         choices,
+        parkReason,
       );
     }
 
@@ -540,6 +566,8 @@ export class PlaywrightApplyDriver implements ApplyDriver {
         return blocked(
           `Could not fill "${action.label}" on the ${args.target.company} form (${err instanceof Error ? err.message.split('\n')[0] : err}). ` +
             'Finish the form manually in the open browser, then resolve this task.',
+          [],
+          'unmatched_field',
         );
       }
     }
@@ -553,7 +581,7 @@ export class PlaywrightApplyDriver implements ApplyDriver {
     // Submit — only reached with gate approval upstream.
     const submitButton = await findSubmitButton(page);
     if (!submitButton) {
-      return blocked(`Form filled but no submit button was found on ${args.target.url}. Submit manually in the open browser, then resolve this task.`);
+      return blocked(`Form filled but no submit button was found on ${args.target.url}. Submit manually in the open browser, then resolve this task.`, [], 'unmatched_field');
     }
     await submitButton.click();
     await page.waitForLoadState('load', { timeout: 20000 }).catch(() => undefined);
@@ -562,7 +590,7 @@ export class PlaywrightApplyDriver implements ApplyDriver {
     const afterHtml = await page.content();
     captcha = detectCaptcha(afterHtml);
     if (captcha) {
-      return blocked(`A ${captcha} appeared at submission time. Solve it and submit manually in the open browser, then resolve this task.`);
+      return blocked(`A ${captcha} appeared at submission time. Solve it and submit manually in the open browser, then resolve this task.`, [], 'captcha');
     }
     const confirmationText = extractConfirmation(afterHtml);
     await snap('confirmation');
@@ -636,7 +664,7 @@ export class PlaywrightApplyDriver implements ApplyDriver {
         ...deterministic,
         blockers: [
           ...deterministic.blockers,
-          { question: `agent mapping failed (${err instanceof Error ? err.message : err})`, reason: 'unknown' },
+          { question: `agent mapping failed (${err instanceof Error ? err.message : err})`, reason: 'low_confidence' },
         ],
       };
     }
@@ -644,7 +672,7 @@ export class PlaywrightApplyDriver implements ApplyDriver {
       const extra: FillBlocker[] = [
         ...mapped.unanswerable.map((q) => ({ question: q, reason: blockerReason(q) === 'unknown' ? ('flagged' as const) : blockerReason(q) })),
         ...(mapped.confidence < threshold
-          ? [{ question: `agent mapping confidence ${mapped.confidence.toFixed(2)} below ${threshold}`, reason: 'unknown' as const }]
+          ? [{ question: `agent mapping confidence ${mapped.confidence.toFixed(2)} below ${threshold}`, reason: 'low_confidence' as const }]
           : []),
       ];
       return { ...deterministic, blockers: [...deterministic.blockers.filter((b) => b.reason !== 'unknown'), ...extra] };

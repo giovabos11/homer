@@ -65,6 +65,8 @@ export const STATUS_LABEL: Record<JobStatus, string> = {
   withdrawn: 'Withdrawn',
   quarantined: 'Quarantined',
   skipped: 'Skipped',
+  expired: 'Expired',
+  needs_manual: 'Apply by hand',
 };
 
 export const REMOTE_LABEL: Record<RemoteType, string> = {

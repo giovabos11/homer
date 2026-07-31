@@ -53,6 +53,7 @@ export function toJob(row: JobRow): Job {
     legitVerdict: row.legitVerdict as Job['legitVerdict'],
     legitReasons: parseJson<string[]>(row.legitReasonsJson, []),
     managed: row.managed as Job['managed'],
+    applyChannel: row.applyChannel as Job['applyChannel'],
   };
 }
 
